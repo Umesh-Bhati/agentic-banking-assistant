@@ -7,11 +7,11 @@ export interface CardBlockWorkflowConfig {
   supabaseServiceKey: string;
 }
 
-// Workflow state to pass data between steps
+// Workflow state to pass data between steps - all fields optional since initial state comes from input
 const workflowStateSchema = z.object({
-  userId: z.string(),
-  supabaseUrl: z.string(),
-  supabaseKey: z.string(),
+  userId: z.string().optional(),
+  supabaseUrl: z.string().optional(),
+  supabaseKey: z.string().optional(),
   cards: z.array(z.object({
     id: z.string(),
     last_4: z.string(),
@@ -30,12 +30,12 @@ const fetchUserCardsStep = createStep({
   outputSchema: workflowStateSchema,
   execute: async ({ inputData }) => {
     const { createClient } = await import('@supabase/supabase-js');
-    const supabase = createClient(inputData.supabaseUrl, inputData.supabaseKey);
+    const supabase = createClient(inputData.supabaseUrl!, inputData.supabaseKey!);
 
     const { data: cards, error } = await supabase
       .from('cards')
       .select('id, last_4, status, network, card_type')
-      .eq('customer_id', inputData.userId)
+      .eq('customer_id', inputData.userId!)
       .eq('status', 'ACTIVE');
 
     if (error) {
@@ -96,7 +96,7 @@ const blockCardStep = createStep({
   }),
   execute: async ({ inputData }) => {
     const { createClient } = await import('@supabase/supabase-js');
-    const supabase = createClient(inputData.supabaseUrl, inputData.supabaseKey);
+    const supabase = createClient(inputData.supabaseUrl!, inputData.supabaseKey!);
 
     const { selectedCardId } = inputData;
 
@@ -143,7 +143,7 @@ export const createCardBlockWorkflow = (config: CardBlockWorkflowConfig) => {
       success: z.boolean(),
       message: z.string(),
     }),
-    stateSchema: workflowStateSchema,
+    // No stateSchema - let workflow use input as initial state
   })
     .then(fetchUserCardsStep)
     .then(askCardSelectionStep)
