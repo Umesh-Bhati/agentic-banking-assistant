@@ -53,9 +53,12 @@ function getConfig(): IngestionConfig {
     supabaseUrl,
     supabaseServiceKey,
     urls: [
-      'https://almasraf.ae/en/personal/accounts',
-      'https://almasraf.ae/en/personal/cards',
-      'https://almasraf.ae/en/personal/loans',
+      'https://almasraf.ae/en/personal-banking/personal-account',
+      'https://almasraf.ae/en/personal-banking/savings-account',
+      'https://almasraf.ae/en/personal-banking/personal-loan',
+      'https://almasraf.ae/en/personal-banking/home-loan',
+      'https://almasraf.ae/en/personal-banking/auto-loan',
+      'https://almasraf.ae/en/personal-banking/personal-card/platinum',
     ],
   };
 }

@@ -229,6 +229,15 @@ export function createChatRoute(
         return;
       }
 
+      if (intentResult.intent === 'ACCOUNT_INQUIRY') {
+        await handleAccountInquiry(sessionId, {
+          sendToken,
+          sendDone,
+          sendError,
+        });
+        return;
+      }
+
       if (intentResult.intent === 'PRODUCT_QUESTION') {
         await handleProductQuestion(productAgent, message, history, {
           sendToken,
@@ -264,6 +273,9 @@ export function createChatRoute(
       if (lower.includes('block') && (lower.includes('card') || lower.includes('stop'))) {
         return { intent: 'BLOCK_CARD', confidence: 0.8, reasoning: 'Keyword match for card blocking' };
       }
+      if (lower.includes('balance') || lower.includes('my account') || lower.includes('my balance') || lower.includes('my transactions')) {
+        return { intent: 'ACCOUNT_INQUIRY', confidence: 0.9, reasoning: 'Keyword match for account inquiry' };
+      }
       if (lower.includes('statement') || lower.includes('transaction history')) {
         return { intent: 'STATEMENT_REQUEST', confidence: 0.8, reasoning: 'Keyword match for statement request' };
       }
@@ -290,6 +302,70 @@ export function createChatRoute(
       if (chunk) callbacks.sendToken(chunk);
     }
     callbacks.sendDone();
+  }
+
+  async function handleAccountInquiry(
+    sessionId: string,
+    callbacks: { sendToken: (t: string) => void; sendDone: () => void; sendError: (e: string) => void }
+  ) {
+    try {
+      const customerId = await getCustomerId(supabase, sessionId);
+      if (!customerId) {
+        callbacks.sendError('Customer profile not found.');
+        callbacks.sendDone();
+        return;
+      }
+
+      // Fetch customer profile
+      const { data: profile } = await supabase
+        .from('customer_profiles')
+        .select('full_name')
+        .eq('id', customerId)
+        .single();
+
+      // Fetch bank accounts
+      const { data: accounts } = await supabase
+        .from('bank_accounts')
+        .select('id, account_number, balance, currency, type, status')
+        .eq('customer_id', customerId);
+
+      if (!accounts || accounts.length === 0) {
+        callbacks.sendToken('No active bank accounts found for your profile.');
+        callbacks.sendDone();
+        return;
+      }
+
+      let summary = `Hello ${profile?.full_name || 'Valued Customer'}, here are your account details:\n\n`;
+      accounts.forEach((acc, i) => {
+        summary += `${i + 1}. **${acc.type} Account** (${acc.account_number})\n`;
+        summary += `   - **Balance:** ${Number(acc.balance).toLocaleString('en-US', { minimumFractionDigits: 2 })} ${acc.currency}\n`;
+        summary += `   - **Status:** ${acc.status}\n\n`;
+      });
+
+      // Fetch recent 3 transactions from first account
+      const { data: recentTxs } = await supabase
+        .from('transactions')
+        .select('description, amount, currency, created_at')
+        .eq('account_id', accounts[0].id)
+        .order('created_at', { ascending: false })
+        .limit(3);
+
+      if (recentTxs && recentTxs.length > 0) {
+        summary += `**Recent Transactions:**\n`;
+        recentTxs.forEach(tx => {
+          const numAmount = Number(tx.amount);
+          const formattedAmount = numAmount < 0 ? `${numAmount.toFixed(2)}` : `+${numAmount.toFixed(2)}`;
+          summary += `- ${tx.description}: **${formattedAmount} ${tx.currency}**\n`;
+        });
+      }
+
+      callbacks.sendToken(summary);
+      callbacks.sendDone();
+    } catch (error) {
+      console.error('Account inquiry error:', error);
+      callbacks.sendError(error instanceof Error ? error.message : 'Failed to retrieve account details');
+      callbacks.sendDone();
+    }
   }
 
   async function startCardBlockWorkflow(
