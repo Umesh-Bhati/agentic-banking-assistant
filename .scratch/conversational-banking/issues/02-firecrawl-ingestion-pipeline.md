@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — Monorepo & Database Foundation
 
-**Status:** ready-for-agent
+**Status:** done
 
 ## Acceptance criteria
 
