@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 — Product Knowledge Assistant
 
-**Status:** ready-for-agent
+**Status:** done
 
 ## Acceptance criteria
 
