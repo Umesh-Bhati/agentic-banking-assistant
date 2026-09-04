@@ -1,7 +1,8 @@
-node_modules
-dist
-.expo
+node_modules/
+dist/
+.expo/
 *.log
 .DS_Store
 .env
 .env.local
+/apps/backend/.env
