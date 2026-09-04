@@ -10,12 +10,33 @@ importers:
 
   apps/backend:
     dependencies:
+      '@ai-sdk/openai':
+        specifier: ^4.0.58
+        version: 4.0.58(zod@3.25.76)
       '@boit/types':
         specifier: workspace:*
         version: link:../../packages/types
+      '@mastra/core':
+        specifier: ^1.64.0
+        version: 1.64.0(ai@7.0.92(zod@3.25.76))(zod@3.25.76)
+      '@mastra/rag':
+        specifier: ^2.6.1
+        version: 2.6.1(@mastra/core@1.64.0(ai@7.0.92(zod@3.25.76))(zod@3.25.76))(zod@3.25.76)
+      '@supabase/supabase-js':
+        specifier: ^2.49.0
+        version: 2.115.0(@opentelemetry/api@1.9.0)
+      ai:
+        specifier: ^7.0.0
+        version: 7.0.92(zod@3.25.76)
+      dotenv:
+        specifier: ^17.4.2
+        version: 17.4.2
       fastify:
         specifier: ^5.4.0
         version: 5.12.1
+      zod:
+        specifier: ^3.24.0
+        version: 3.25.76
     devDependencies:
       '@types/node':
         specifier: ^22.15.21

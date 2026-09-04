@@ -1,5 +1,9 @@
 import fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
+import { config } from 'dotenv';
+import { createChatRoute } from './routes/chat.js';
+
+config();
 
 export async function createServer(): Promise<FastifyInstance> {
   const server = fastify({
@@ -9,6 +13,29 @@ export async function createServer(): Promise<FastifyInstance> {
   server.get('/health', async () => {
     return { status: 'ok' };
   });
+
+  // Register chat route
+  const requiredEnv = [
+    'SUPABASE_URL',
+    'SUPABASE_SERVICE_KEY',
+    'OPENAI_API_KEY',
+    'OPENROUTER_API_KEY',
+  ];
+
+  for (const key of requiredEnv) {
+    if (!process.env[key]) {
+      server.log.warn(`Missing environment variable: ${key}`);
+    }
+  }
+
+  if (requiredEnv.every(key => process.env[key])) {
+    createChatRoute(server, {
+      supabaseUrl: process.env.SUPABASE_URL!,
+      supabaseServiceKey: process.env.SUPABASE_SERVICE_KEY!,
+      openaiApiKey: process.env.OPENAI_API_KEY!,
+      openrouterApiKey: process.env.OPENROUTER_API_KEY!,
+    });
+  }
 
   return server;
 }
