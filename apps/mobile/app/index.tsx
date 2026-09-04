@@ -1,5 +1,6 @@
 import { View, Text, StyleSheet, TextInput, FlatList, TouchableOpacity, KeyboardAvoidingView, Platform, ActivityIndicator, Modal } from 'react-native';
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { PinModal } from '../components/PinModal';
 import { StatementCard } from '../components/StatementCard';
 import type { StatementCardData } from '@boit/types';
@@ -40,16 +41,37 @@ export default function ChatScreen() {
   const [pinLoading, setPinLoading] = useState(false);
   const [pinError, setPinError] = useState<string | undefined>();
 
+  useEffect(() => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const stored = window.localStorage.getItem('almasraf_logged_in');
+        if (stored === 'true') {
+          setIsLoggedIn(true);
+        }
+      }
+    } catch (e) {}
+  }, []);
+
   const handleLogin = () => {
     if (!email.trim() || !password.trim()) return;
     setLoginLoading(true);
     setTimeout(() => {
       setLoginLoading(false);
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          window.localStorage.setItem('almasraf_logged_in', 'true');
+        }
+      } catch (e) {}
       setIsLoggedIn(true);
-    }, 600);
+    }, 400);
   };
 
   const handleLogout = () => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.removeItem('almasraf_logged_in');
+      }
+    } catch (e) {}
     setIsLoggedIn(false);
     setMessages([]);
     setHistory([]);
@@ -247,14 +269,14 @@ export default function ChatScreen() {
         </Text>
       )}
       {item.isStreaming && (
-        <ActivityIndicator size="small" color="#00838F" style={styles.streamingIndicator} />
+        <ActivityIndicator size="small" color="#364b65" style={styles.streamingIndicator} />
       )}
     </View>
   );
 
   if (!isLoggedIn) {
     return (
-      <View style={styles.loginContainer}>
+      <SafeAreaView style={styles.loginContainer}>
         <View style={styles.loginCard}>
           <Text style={styles.loginLogo}>🏦</Text>
           <Text style={styles.loginTitle}>Al Masraf Mobile Banking</Text>
@@ -295,25 +317,26 @@ export default function ChatScreen() {
             )}
           </TouchableOpacity>
         </View>
-      </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={0}
-    >
-      <View style={styles.header}>
-        <View style={styles.headerTop}>
-          <Text style={styles.headerTitle}>Al Masraf Assistant</Text>
-          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-            <Text style={styles.logoutButtonText}>Log Out</Text>
-          </TouchableOpacity>
+    <SafeAreaView style={styles.container}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 10 : 0}
+      >
+        <View style={styles.header}>
+          <View style={styles.headerTop}>
+            <Text style={styles.headerTitle}>Al Masraf Assistant</Text>
+            <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+              <Text style={styles.logoutButtonText}>Log Out</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.headerSubtitle}>Logged in as John Doe</Text>
         </View>
-        <Text style={styles.headerSubtitle}>Logged in as John Doe</Text>
-      </View>
       
       <FlatList
         ref={flatListRef}
@@ -353,7 +376,8 @@ export default function ChatScreen() {
         loading={pinLoading}
         error={pinError}
       />
-    </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
@@ -364,7 +388,7 @@ const styles = StyleSheet.create({
   },
   loginContainer: {
     flex: 1,
-    backgroundColor: '#00838F',
+    backgroundColor: '#364b65',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
@@ -389,7 +413,7 @@ const styles = StyleSheet.create({
   loginTitle: {
     fontSize: 22,
     fontWeight: 'bold',
-    color: '#00838F',
+    color: '#364b65',
     textAlign: 'center',
   },
   loginSubtitle: {
@@ -419,7 +443,7 @@ const styles = StyleSheet.create({
     color: '#333',
   },
   loginButton: {
-    backgroundColor: '#00838F',
+    backgroundColor: '#364b65',
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: 'center',
@@ -458,7 +482,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 22,
     fontWeight: 'bold',
-    color: '#00838F',
+    color: '#364b65',
   },
   headerSubtitle: {
     fontSize: 14,
@@ -466,9 +490,9 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   messagesContainer: {
-    flex: 1,
+    flexGrow: 1,
     padding: 16,
-    paddingBottom: 80,
+    paddingBottom: 20,
   },
   messageContainer: {
     maxWidth: '80%',
@@ -478,7 +502,7 @@ const styles = StyleSheet.create({
   },
   userMessage: {
     alignSelf: 'flex-end',
-    backgroundColor: '#00838F',
+    backgroundColor: '#364b65',
   },
   assistantMessage: {
     alignSelf: 'flex-start',
@@ -521,7 +545,7 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     paddingHorizontal: 20,
     paddingVertical: 10,
-    backgroundColor: '#00838F',
+    backgroundColor: '#364b65',
     borderRadius: 24,
     justifyContent: 'center',
   },
