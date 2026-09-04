@@ -20,6 +20,7 @@ const workflowStateSchema = z.object({
     card_type: z.string(),
   })).optional(),
   selectedCardId: z.string().optional(),
+  authToken: z.string().optional(),
 });
 
 // Step 1: Fetch user cards
@@ -86,7 +87,45 @@ const askCardSelectionStep = createStep({
   },
 });
 
-// Step 3: Block the selected card
+// Step 3: Ask for authorization (PIN/Biometric) - NEW STEP
+const askForAuthStep = createStep({
+  id: 'wait-for-auth',
+  description: 'Wait for user PIN/Biometric authorization',
+  inputSchema: workflowStateSchema,
+  outputSchema: workflowStateSchema,
+  suspendSchema: z.object({
+    reason: z.string(),
+    selectedCardId: z.string(),
+    cardType: z.string(),
+    last4: z.string(),
+  }),
+  resumeSchema: z.object({
+    authToken: z.string(),
+  }),
+  execute: async ({ inputData, resumeData, suspend }) => {
+    const { selectedCardId, cards } = inputData;
+    const { authToken } = resumeData ?? {};
+
+    if (!authToken) {
+      const selectedCard = cards?.find(c => c.id === selectedCardId);
+      return await suspend({
+        reason: 'Please enter your PIN or use Face ID to authorize blocking this card.',
+        selectedCardId: selectedCardId!,
+        cardType: selectedCard?.card_type || 'Card',
+        last4: selectedCard?.last_4 || '****',
+      });
+    }
+
+    // Simple PIN validation (in production, this would be proper verification)
+    if (authToken.length < 4) {
+      throw new Error('Invalid PIN. Please enter a valid 4-digit PIN.');
+    }
+
+    return { ...inputData, authToken };
+  },
+});
+
+// Step 4: Block the selected card
 const blockCardStep = createStep({
   id: 'block-card',
   description: 'Block the selected card in Supabase',
@@ -148,6 +187,7 @@ export const createCardBlockWorkflow = (config: CardBlockWorkflowConfig) => {
   })
     .then(fetchUserCardsStep)
     .then(askCardSelectionStep)
+    .then(askForAuthStep)
     .then(blockCardStep)
     .commit();
 };

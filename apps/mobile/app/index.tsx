@@ -1,11 +1,24 @@
-import { View, Text, StyleSheet, TextInput, FlatList, TouchableOpacity, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TextInput, FlatList, TouchableOpacity, KeyboardAvoidingView, Platform, ActivityIndicator, Modal } from 'react-native';
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { PinModal } from '../components/PinModal';
+import { StatementCard } from '../components/StatementCard';
+import type { StatementCardData } from '@boit/types';
 
 interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   isStreaming?: boolean;
+  statementData?: StatementCardData;
+}
+
+interface AuthRequiredData {
+  type: 'auth_required';
+  workflowState: any;
+  suspendData: {
+    cardType: string;
+    last4: string;
+  };
 }
 
 const API_BASE_URL = 'http://localhost:3000';
@@ -17,6 +30,10 @@ export default function ChatScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const flatListRef = useRef<FlatList<Message>>(null);
   const [history, setHistory] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
+  const [showPinModal, setShowPinModal] = useState(false);
+  const [pinModalData, setPinModalData] = useState<{ cardType: string; last4: string } | null>(null);
+  const [pinLoading, setPinLoading] = useState(false);
+  const [pinError, setPinError] = useState<string | undefined>();
 
   const scrollToBottom = useCallback(() => {
     flatListRef.current?.scrollToEnd({ animated: true });
@@ -108,6 +125,25 @@ export default function ChatScreen() {
                 setIsLoading(false);
               } else if (parsed.type === 'error') {
                 throw new Error(parsed.error || 'Unknown error');
+              } else if (parsed.type === 'auth_required') {
+                // Show PIN modal
+                const authData = parsed as AuthRequiredData;
+                setPinModalData({
+                  cardType: authData.suspendData.cardType,
+                  last4: authData.suspendData.last4,
+                });
+                setShowPinModal(true);
+                setIsLoading(false);
+              } else if (parsed.type === 'STATEMENT_CARD' && parsed.data) {
+                setMessages(prev => prev.map(msg => 
+                  msg.id === assistantMessage.id 
+                    ? { ...msg, statementData: parsed.data, isStreaming: false }
+                    : msg
+                ));
+                setIsLoading(false);
+              } else if (parsed.type === 'workflow_suspended') {
+                // Handle workflow suspended (card selection / fee acceptance)
+                setIsLoading(false);
               }
             } catch (e) {
               // Ignore parse errors for incomplete chunks
@@ -126,17 +162,65 @@ export default function ChatScreen() {
     }
   };
 
+  const handlePinSubmit = async (pin: string) => {
+    setPinLoading(true);
+    setPinError(undefined);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          authToken: pin,
+          sessionId: SESSION_ID,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        // Success - close modal and add confirmation message
+        setShowPinModal(false);
+        setPinModalData(null);
+        setMessages(prev => [...prev, {
+          id: Date.now().toString(),
+          role: 'assistant',
+          content: data.message,
+        }]);
+        setHistory(prev => [...prev, { role: 'assistant' as const, content: data.message }]);
+      } else {
+        setPinError(data.error || 'Authorization failed');
+      }
+    } catch (error) {
+      setPinError('Network error. Please try again.');
+    } finally {
+      setPinLoading(false);
+    }
+  };
+
+  const handlePinCancel = () => {
+    setShowPinModal(false);
+    setPinModalData(null);
+    setPinError(undefined);
+  };
+
   const renderMessage = ({ item }: { item: Message }) => (
     <View style={[
       styles.messageContainer,
       item.role === 'user' ? styles.userMessage : styles.assistantMessage
     ]}>
-      <Text style={[
-        styles.messageText,
-        item.role === 'user' ? styles.userMessageText : styles.assistantMessageText
-      ]}>
-        {item.content}
-      </Text>
+      {item.statementData ? (
+        <StatementCard data={item.statementData} />
+      ) : (
+        <Text style={[
+          styles.messageText,
+          item.role === 'user' ? styles.userMessageText : styles.assistantMessageText
+        ]}>
+          {item.content}
+        </Text>
+      )}
       {item.isStreaming && (
         <ActivityIndicator size="small" color="#00838F" style={styles.streamingIndicator} />
       )}
@@ -182,6 +266,16 @@ export default function ChatScreen() {
           <Text style={styles.sendButtonText}>{isLoading ? '...' : 'Send'}</Text>
         </TouchableOpacity>
       </View>
+
+      <PinModal
+        visible={showPinModal}
+        cardType={pinModalData?.cardType || ''}
+        last4={pinModalData?.last4 || ''}
+        onAuthSubmit={handlePinSubmit}
+        onCancel={handlePinCancel}
+        loading={pinLoading}
+        error={pinError}
+      />
     </KeyboardAvoidingView>
   );
 }

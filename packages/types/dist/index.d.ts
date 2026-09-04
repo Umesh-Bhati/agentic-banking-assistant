@@ -76,4 +76,16 @@ export interface IntentResult {
     confidence: number;
     reasoning: string;
 }
+export interface StatementCardData {
+    url: string;
+    fee: number;
+    currency: string;
+    accountNumber?: string;
+    fromDate?: string;
+    toDate?: string;
+}
+export interface StatementCardPayload {
+    type: 'STATEMENT_CARD';
+    data: StatementCardData;
+}
 //# sourceMappingURL=index.d.ts.map

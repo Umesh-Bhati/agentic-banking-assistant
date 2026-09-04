@@ -1,9 +1,13 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { Mastra } from '@mastra/core';
 import { createProductKnowledgeAgent } from '../agents/product-knowledge-agent.js';
 import { createIntentRouterAgent } from '../agents/intent-router-agent.js';
 import { createCardBlockWorkflow, CardBlockWorkflowInput, CardBlockWorkflowOutput } from '../workflows/card-block-workflow.js';
+import { createStatementWorkflow } from '../workflows/statement-workflow.js';
 import type { ActiveWorkflowState, WorkflowState, IntentResult } from '@boit/types';
+
+export const activeRuns = new Map<string, any>();
 
 interface ChatRequest {
   message: string;
@@ -21,6 +25,7 @@ interface WorkflowRunResult {
   suspendData?: any;
   output?: CardBlockWorkflowOutput;
   runId: string;
+  error?: string;
 }
 
 async function getChatSession(supabase: SupabaseClient, sessionId: string): Promise<ActiveWorkflowState | null> {
@@ -96,10 +101,22 @@ export function createChatRoute(
     openaiApiKey: config.openaiApiKey,
     openrouterApiKey: config.openrouterApiKey,
   });
-  const cardBlockWorkflow = createCardBlockWorkflow({ 
+  const cardBlockWorkflowRaw = createCardBlockWorkflow({ 
     supabaseUrl: config.supabaseUrl,
     supabaseServiceKey: config.supabaseServiceKey,
   });
+  const statementWorkflowRaw = createStatementWorkflow({
+    supabaseUrl: config.supabaseUrl,
+    supabaseServiceKey: config.supabaseServiceKey,
+  });
+  const mastra = new Mastra({
+    workflows: {
+      cardBlockWorkflow: cardBlockWorkflowRaw,
+      statementWorkflow: statementWorkflowRaw,
+    },
+  });
+  const cardBlockWorkflow = mastra.getWorkflow('cardBlockWorkflow');
+  const statementWorkflow = mastra.getWorkflow('statementWorkflow');
 
   fastify.post<{
     Body: ChatRequest;
@@ -138,6 +155,24 @@ export function createChatRoute(
       sendEvent(JSON.stringify({ type: 'workflow_suspended', workflowState, suspendData }));
     };
 
+    const sendAuthRequired = (workflowState: ActiveWorkflowState, suspendData?: any) => {
+      const stepSuspendData = suspendData?.['wait-for-auth'] || suspendData;
+      sendEvent(JSON.stringify({ 
+        type: 'auth_required', 
+        workflowState, 
+        suspendData: stepSuspendData,
+        cardType: stepSuspendData?.cardType,
+        last4: stepSuspendData?.last4,
+      }));
+    };
+
+    const sendStatementCard = (data: any) => {
+      sendEvent(JSON.stringify({ 
+        type: 'STATEMENT_CARD', 
+        data 
+      }));
+    };
+
     try {
       // Check for existing active workflow
       const existingWorkflowState = await getChatSession(supabase, sessionId);
@@ -155,11 +190,13 @@ export function createChatRoute(
 
       // If there's an active workflow, resume it
       if (existingWorkflowState) {
-        await handleActiveWorkflow(existingWorkflowState, message, sessionId, config, {
+        await handleActiveWorkflow({ cardBlockWorkflow, statementWorkflow }, existingWorkflowState, message, sessionId, config, {
           sendToken,
           sendDone,
           sendWorkflowSuspended,
           sendError,
+          sendAuthRequired,
+          sendStatementCard,
         });
         return;
       }
@@ -171,6 +208,17 @@ export function createChatRoute(
           sendDone,
           sendWorkflowSuspended,
           sendError,
+        });
+        return;
+      }
+
+      if (intentResult.intent === 'STATEMENT_REQUEST') {
+        await startStatementWorkflow(statementWorkflow, sessionId, config, {
+          sendToken,
+          sendDone,
+          sendWorkflowSuspended,
+          sendError,
+          sendStatementCard,
         });
         return;
       }
@@ -198,10 +246,9 @@ export function createChatRoute(
   });
 
   async function classifyIntent(agent: ReturnType<typeof createIntentRouterAgent>, message: string): Promise<IntentResult> {
-    const messages: CoreMessage[] = [{ role: 'user', content: message }];
-    const result = await agent.generate(messages, { maxSteps: 1 });
-    
     try {
+      const messages: CoreMessage[] = [{ role: 'user', content: message }];
+      const result = await agent.generate(messages, { maxSteps: 1 });
       const text = result.text || '{}';
       const parsed = JSON.parse(text);
       return parsed as IntentResult;
@@ -210,6 +257,9 @@ export function createChatRoute(
       const lower = message.toLowerCase();
       if (lower.includes('block') && (lower.includes('card') || lower.includes('stop'))) {
         return { intent: 'BLOCK_CARD', confidence: 0.8, reasoning: 'Keyword match for card blocking' };
+      }
+      if (lower.includes('statement') || lower.includes('transaction history')) {
+        return { intent: 'STATEMENT_REQUEST', confidence: 0.8, reasoning: 'Keyword match for statement request' };
       }
       if (['cancel', 'go back', 'never mind', 'stop', 'abort'].some(kw => lower.includes(kw))) {
         return { intent: 'CANCEL_WORKFLOW', confidence: 0.7, reasoning: 'Keyword match for cancel' };
@@ -266,11 +316,15 @@ export function createChatRoute(
       const workflowResult = result as unknown as WorkflowRunResult;
 
       if (workflowResult.status === 'suspended') {
+        activeRuns.set(workflowResult.runId, run);
         // Workflow suspended - waiting for card selection
+        const suspendedStepName = Array.isArray(workflowResult.suspended?.[0]) 
+          ? workflowResult.suspended[0][0] 
+          : workflowResult.suspended?.[0];
         const workflowState: ActiveWorkflowState = {
           workflow_type: 'card-block-workflow',
           step: 'WAITING_CARD_SELECTION',
-          data: { runId: workflowResult.runId, suspendedStep: workflowResult.suspended?.[0] },
+          data: { runId: workflowResult.runId, suspendedStep: suspendedStepName },
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
@@ -278,9 +332,10 @@ export function createChatRoute(
         await updateChatSessionWorkflowState(supabase, sessionId, workflowState);
         
         // Send the suspend message from workflow (should match spec: "Which of your 3 cards...")
-        const suspendMessage = workflowResult.suspendData?.reason || 'Which of your 3 cards would you like to block?';
+        const suspendData = (workflowResult as any).suspendPayload || workflowResult.suspendData;
+        const suspendMessage = suspendData?.reason || suspendData?.['ask-card-selection']?.reason || 'Which of your 3 cards would you like to block?';
         callbacks.sendToken(suspendMessage);
-        callbacks.sendWorkflowSuspended(workflowState, workflowResult.suspendData);
+        callbacks.sendWorkflowSuspended(workflowState, suspendData);
       } else if (workflowResult.status === 'success') {
         callbacks.sendToken(workflowResult.output?.message || 'Card blocked successfully.');
         callbacks.sendDone();
@@ -292,12 +347,73 @@ export function createChatRoute(
     }
   }
 
+  async function startStatementWorkflow(
+    workflow: any,
+    sessionId: string,
+    config: { supabaseUrl: string; supabaseServiceKey: string },
+    callbacks: { sendToken: (t: string) => void; sendDone: (ws?: ActiveWorkflowState | null) => void; sendWorkflowSuspended: (ws: ActiveWorkflowState, sd?: any) => void; sendError: (e: string) => void; sendStatementCard?: (data: any) => void }
+  ) {
+    try {
+      const customerId = await getCustomerId(supabase, sessionId);
+      if (!customerId) {
+        callbacks.sendError('Customer profile not found');
+        callbacks.sendDone();
+        return;
+      }
+
+      const run = await workflow.createRun();
+      const result = await run.start({ 
+        inputData: { 
+          userId: customerId,
+          supabaseUrl: config.supabaseUrl,
+          supabaseKey: config.supabaseServiceKey,
+        } 
+      });
+
+      const workflowResult = result as unknown as any;
+
+      if (workflowResult.status === 'suspended') {
+        activeRuns.set(workflowResult.runId, run);
+        const suspendedStepName = Array.isArray(workflowResult.suspended?.[0]) 
+          ? workflowResult.suspended[0][0] 
+          : workflowResult.suspended?.[0];
+        const workflowState: ActiveWorkflowState = {
+          workflow_type: 'statement-workflow',
+          step: 'WAITING_FEE_ACCEPTANCE',
+          data: { runId: workflowResult.runId, suspendedStep: suspendedStepName },
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+
+        await updateChatSessionWorkflowState(supabase, sessionId, workflowState);
+        
+        const suspendData = workflowResult.suspendPayload || workflowResult.suspendData;
+        const stepData = suspendData?.['ask-fee-acceptance'] || suspendData;
+        const suspendMessage = stepData?.reason || 'Generating this statement will cost 25 AED. Do you accept?';
+        callbacks.sendToken(suspendMessage);
+        callbacks.sendWorkflowSuspended(workflowState, stepData);
+      } else if (workflowResult.status === 'success') {
+        const outputData = workflowResult.output?.data || workflowResult.result?.data;
+        if (outputData) {
+          callbacks.sendStatementCard?.(outputData);
+        }
+        callbacks.sendToken(workflowResult.output?.message || workflowResult.result?.message || 'Statement generated successfully.');
+        callbacks.sendDone();
+      }
+    } catch (error) {
+      console.error('Statement workflow error:', error);
+      callbacks.sendError(error instanceof Error ? error.message : 'Failed to start statement workflow');
+      callbacks.sendDone();
+    }
+  }
+
   async function handleActiveWorkflow(
+    workflows: { cardBlockWorkflow: any; statementWorkflow: any },
     workflowState: ActiveWorkflowState,
     message: string,
     sessionId: string,
     config: { supabaseUrl: string; supabaseServiceKey: string },
-    callbacks: { sendToken: (t: string) => void; sendDone: (ws?: ActiveWorkflowState | null) => void; sendWorkflowSuspended: (ws: ActiveWorkflowState, sd?: any) => void; sendError: (e: string) => void }
+    callbacks: { sendToken: (t: string) => void; sendDone: (ws?: ActiveWorkflowState | null) => void; sendWorkflowSuspended: (ws: ActiveWorkflowState, sd?: any) => void; sendError: (e: string) => void; sendAuthRequired?: (ws: ActiveWorkflowState, sd?: any) => void; sendStatementCard?: (data: any) => void }
   ) {
     try {
       if (workflowState.workflow_type === 'card-block-workflow') {
@@ -314,12 +430,11 @@ export function createChatRoute(
           throw new Error('Customer profile not found');
         }
 
-        // Recreate workflow and resume
-        const workflow = createCardBlockWorkflow({ 
-          supabaseUrl: config.supabaseUrl,
-          supabaseServiceKey: config.supabaseServiceKey,
-        });
-        const run = await workflow.createRun({ runId });
+        let run = activeRuns.get(runId);
+        if (!run) {
+          run = await workflows.cardBlockWorkflow.createRun({ runId });
+          activeRuns.set(runId, run);
+        }
         
         // Determine resume data based on current step
         let resumeData: any = {};
@@ -358,21 +473,99 @@ export function createChatRoute(
 
         if (workflowResult.status === 'suspended') {
           // Still suspended - update state
+          const suspendedStepName = Array.isArray(workflowResult.suspended?.[0]) 
+            ? workflowResult.suspended[0][0] 
+            : workflowResult.suspended?.[0];
+          const isAuthStep = suspendedStepName === 'wait-for-auth';
           const newWorkflowState: ActiveWorkflowState = {
             ...workflowState,
-            step: 'WAITING_CARD_SELECTION' as WorkflowState,
-            data: { ...workflowState.data, runId, suspendedStep: workflowResult.suspended?.[0] },
+            step: isAuthStep ? 'WAITING_FOR_AUTH' : 'WAITING_CARD_SELECTION',
+            data: { ...workflowState.data, runId, suspendedStep: suspendedStepName },
             updated_at: new Date().toISOString(),
           };
           
           await updateChatSessionWorkflowState(supabase, sessionId, newWorkflowState);
           
-          const suspendMessage = workflowResult.suspendData?.reason || 'Please provide the last 4 digits of the card you want to block.';
-          callbacks.sendToken(suspendMessage);
-          callbacks.sendWorkflowSuspended(newWorkflowState, workflowResult.suspendData);
+          const suspendData = (workflowResult as any).suspendPayload || workflowResult.suspendData;
+          if (isAuthStep) {
+            // Send auth_required signal for the mobile app to show PIN modal
+            const stepData = suspendData?.['wait-for-auth'] || suspendData;
+            const suspendMessage = stepData?.reason || 'Please enter your PIN or use Face ID to authorize.';
+            callbacks.sendToken(suspendMessage);
+            callbacks.sendAuthRequired?.(newWorkflowState, stepData);
+          } else {
+            const stepData = suspendData?.['ask-card-selection'] || suspendData;
+            const suspendMessage = stepData?.reason || 'Please provide the last 4 digits of the card you want to block.';
+            callbacks.sendToken(suspendMessage);
+            callbacks.sendWorkflowSuspended(newWorkflowState, stepData);
+          }
         } else if (workflowResult.status === 'success') {
+          activeRuns.delete(runId);
           await clearChatSessionWorkflowState(supabase, sessionId);
           callbacks.sendToken(workflowResult.output?.message || 'Card blocked successfully.');
+          callbacks.sendDone(null);
+        } else {
+          throw new Error(`Workflow ended with status: ${workflowResult.status}`);
+        }
+      } else if (workflowState.workflow_type === 'statement-workflow') {
+        const runId = workflowState.data?.runId as string | undefined;
+        const suspendedStep = workflowState.data?.suspendedStep as string | undefined;
+
+        if (!runId) {
+          throw new Error('Invalid workflow state: missing runId');
+        }
+
+        const customerId = await getCustomerId(supabase, sessionId);
+        if (!customerId) {
+          throw new Error('Customer profile not found');
+        }
+
+        let run = activeRuns.get(runId);
+        if (!run) {
+          run = await workflows.statementWorkflow.createRun({ runId });
+          activeRuns.set(runId, run);
+        }
+
+        let resumeData: any = {};
+        if (workflowState.step === 'WAITING_FEE_ACCEPTANCE') {
+          const lower = message.toLowerCase();
+          const accepted = ['yes', 'accept', 'ok', 'sure', 'confirm', 'agree', 'yep', 'yeah', 'proceed'].some(kw => lower.includes(kw));
+          resumeData = { accepted };
+        }
+
+        const result = await run.resume({
+          step: suspendedStep!,
+          resumeData,
+        });
+
+        const workflowResult = result as unknown as any;
+
+        if (workflowResult.status === 'suspended') {
+          const suspendedStepName = Array.isArray(workflowResult.suspended?.[0]) 
+            ? workflowResult.suspended[0][0] 
+            : workflowResult.suspended?.[0];
+          const newWorkflowState: ActiveWorkflowState = {
+            ...workflowState,
+            step: 'WAITING_FEE_ACCEPTANCE',
+            data: { ...workflowState.data, runId, suspendedStep: suspendedStepName },
+            updated_at: new Date().toISOString(),
+          };
+
+          await updateChatSessionWorkflowState(supabase, sessionId, newWorkflowState);
+
+          const suspendData = workflowResult.suspendPayload || workflowResult.suspendData;
+          const stepData = suspendData?.['ask-fee-acceptance'] || suspendData;
+          const suspendMessage = stepData?.reason || 'Generating this statement will cost 25 AED. Do you accept?';
+          callbacks.sendToken(suspendMessage);
+          callbacks.sendWorkflowSuspended(newWorkflowState, stepData);
+        } else if (workflowResult.status === 'success') {
+          activeRuns.delete(runId);
+          await clearChatSessionWorkflowState(supabase, sessionId);
+          const outputData = workflowResult.output?.data || workflowResult.result?.data;
+          if (outputData) {
+            callbacks.sendStatementCard?.(outputData);
+          }
+          callbacks.sendToken(workflowResult.output?.message || workflowResult.result?.message || 'Your account statement has been generated successfully.');
           callbacks.sendDone(null);
         } else {
           throw new Error(`Workflow ended with status: ${workflowResult.status}`);
@@ -386,4 +579,88 @@ export function createChatRoute(
       callbacks.sendDone();
     }
   }
+}
+
+export interface AuthRequest {
+  authToken: string;
+  sessionId: string;
+}
+
+export function createAuthRoute(
+  fastify: FastifyInstance,
+  config: {
+    supabaseUrl: string;
+    supabaseServiceKey: string;
+  }
+) {
+  const supabase = createClient(config.supabaseUrl, config.supabaseServiceKey);
+  const cardBlockWorkflowRaw = createCardBlockWorkflow({ 
+    supabaseUrl: config.supabaseUrl,
+    supabaseServiceKey: config.supabaseServiceKey,
+  });
+  const mastra = new Mastra({
+    workflows: {
+      cardBlockWorkflow: cardBlockWorkflowRaw,
+    },
+  });
+  const cardBlockWorkflow = mastra.getWorkflow('cardBlockWorkflow');
+
+  fastify.post<{
+    Body: AuthRequest;
+  }>('/api/auth', async (request: FastifyRequest<{ Body: AuthRequest }>, reply: FastifyReply) => {
+    const { authToken, sessionId } = request.body;
+
+    if (!authToken || !sessionId) {
+      return reply.code(400).send({ error: 'Missing authToken or sessionId' });
+    }
+
+    // Check for existing active workflow
+    const existingWorkflowState = await getChatSession(supabase, sessionId);
+    
+    if (!existingWorkflowState) {
+      return reply.code(404).send({ error: 'No active workflow found' });
+    }
+
+    if (existingWorkflowState.step !== 'WAITING_FOR_AUTH') {
+      return reply.code(400).send({ error: 'Workflow not waiting for authorization' });
+    }
+
+    try {
+      const runId = existingWorkflowState.data?.runId as string | undefined;
+      const suspendedStep = existingWorkflowState.data?.suspendedStep as string | undefined;
+      
+      if (!runId) {
+        return reply.code(400).send({ error: 'Invalid workflow state: missing runId' });
+      }
+
+      let run = activeRuns.get(runId);
+      if (!run) {
+        run = await cardBlockWorkflow.createRun({ runId });
+        activeRuns.set(runId, run);
+      }
+      
+      const result = await run.resume({
+        step: suspendedStep!,
+        resumeData: { authToken },
+      });
+
+      const workflowResult = result as unknown as WorkflowRunResult;
+
+      if (workflowResult.status === 'success') {
+        activeRuns.delete(runId);
+        await clearChatSessionWorkflowState(supabase, sessionId);
+        return reply.send({ 
+          success: true, 
+          message: workflowResult.output?.message || 'Card blocked successfully.' 
+        });
+      } else if (workflowResult.status === 'failed') {
+        return reply.code(401).send({ error: workflowResult.error || 'Authorization failed' });
+      } else {
+        return reply.code(500).send({ error: 'Unexpected workflow state' });
+      }
+    } catch (error) {
+      console.error('Auth endpoint error:', error);
+      return reply.code(500).send({ error: error instanceof Error ? error.message : 'Internal server error' });
+    }
+  });
 }
