@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 — The Firecrawl Ingestion Pipeline
 
-**Status:** ready-for-agent
+**Status:** done
 
 ## Acceptance criteria
 
