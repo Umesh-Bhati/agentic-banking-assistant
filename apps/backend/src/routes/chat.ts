@@ -76,7 +76,13 @@ async function getCustomerId(supabase: SupabaseClient, userId: string): Promise<
     .single();
 
   if (error || !data) {
-    return null;
+    // Fallback for demo sessions to first customer profile (John Doe)
+    const { data: fallbackProfile } = await supabase
+      .from('customer_profiles')
+      .select('id')
+      .limit(1)
+      .single();
+    return fallbackProfile?.id || null;
   }
   return data.id;
 }

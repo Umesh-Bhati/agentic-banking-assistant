@@ -22,7 +22,7 @@ interface AuthRequiredData {
 }
 
 const API_BASE_URL = 'http://localhost:3000';
-const SESSION_ID = 'demo-session-' + Date.now();
+const SESSION_ID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
 
 export default function ChatScreen() {
   const [messages, setMessages] = useState<Message[]>([]);
