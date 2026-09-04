@@ -66,100 +66,105 @@ export default function ChatScreen() {
     setInputText('');
     setIsLoading(true);
 
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          message: currentInput,
-          sessionId: SESSION_ID,
-          history: newHistory,
-        }),
-      });
+    let assistantContent = '';
+    let buffer = '';
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
+    const handleChunk = (chunkText: string) => {
+      buffer += chunkText;
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
 
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-
-      if (!reader) {
-        throw new Error('No response body');
-      }
-
-      let assistantContent = '';
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
-            if (data === '[DONE]') continue;
-            
-            try {
-              const parsed = JSON.parse(data);
-              if (parsed.type === 'token' && parsed.content) {
-                assistantContent += parsed.content;
-                setMessages(prev => prev.map(msg => 
-                  msg.id === assistantMessage.id 
-                    ? { ...msg, content: assistantContent }
-                    : msg
-                ));
-              } else if (parsed.type === 'done') {
-                setMessages(prev => prev.map(msg => 
-                  msg.id === assistantMessage.id 
-                    ? { ...msg, content: assistantContent, isStreaming: false }
-                    : msg
-                ));
-                setHistory(prev => [...prev, { role: 'assistant' as const, content: assistantContent }]);
-                setIsLoading(false);
-              } else if (parsed.type === 'error') {
-                throw new Error(parsed.error || 'Unknown error');
-              } else if (parsed.type === 'auth_required') {
-                // Show PIN modal
-                const authData = parsed as AuthRequiredData;
-                setPinModalData({
-                  cardType: authData.suspendData.cardType,
-                  last4: authData.suspendData.last4,
-                });
-                setShowPinModal(true);
-                setIsLoading(false);
-              } else if (parsed.type === 'STATEMENT_CARD' && parsed.data) {
-                setMessages(prev => prev.map(msg => 
-                  msg.id === assistantMessage.id 
-                    ? { ...msg, statementData: parsed.data, isStreaming: false }
-                    : msg
-                ));
-                setIsLoading(false);
-              } else if (parsed.type === 'workflow_suspended') {
-                // Handle workflow suspended (card selection / fee acceptance)
-                setIsLoading(false);
-              }
-            } catch (e) {
-              // Ignore parse errors for incomplete chunks
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6);
+          if (data === '[DONE]') continue;
+          
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.type === 'token' && parsed.content) {
+              assistantContent += parsed.content;
+              setMessages(prev => prev.map(msg => 
+                msg.id === assistantMessage.id 
+                  ? { ...msg, content: assistantContent }
+                  : msg
+              ));
+            } else if (parsed.type === 'done') {
+              setMessages(prev => prev.map(msg => 
+                msg.id === assistantMessage.id 
+                  ? { ...msg, content: assistantContent, isStreaming: false }
+                  : msg
+              ));
+              setHistory(prev => [...prev, { role: 'assistant' as const, content: assistantContent }]);
+              setIsLoading(false);
+            } else if (parsed.type === 'error') {
+              throw new Error(parsed.error || 'Unknown error');
+            } else if (parsed.type === 'auth_required') {
+              const authData = parsed as AuthRequiredData;
+              setPinModalData({
+                cardType: authData.suspendData.cardType,
+                last4: authData.suspendData.last4,
+              });
+              setShowPinModal(true);
+              setIsLoading(false);
+            } else if (parsed.type === 'STATEMENT_CARD' && parsed.data) {
+              setMessages(prev => prev.map(msg => 
+                msg.id === assistantMessage.id 
+                  ? { ...msg, statementData: parsed.data, isStreaming: false }
+                  : msg
+              ));
+              setIsLoading(false);
+            } else if (parsed.type === 'workflow_suspended') {
+              setIsLoading(false);
             }
+          } catch (e) {
+            // Ignore parse errors for incomplete chunks
           }
         }
       }
-    } catch (error) {
-      console.error('Chat error:', error);
+    };
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${API_BASE_URL}/api/chat`);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+
+    let seenBytes = 0;
+
+    xhr.onreadystatechange = () => {
+      if (xhr.readyState === 3 || xhr.readyState === 4) {
+        const newText = xhr.responseText.substring(seenBytes);
+        seenBytes = xhr.responseText.length;
+        if (newText) {
+          handleChunk(newText);
+        }
+      }
+      if (xhr.readyState === 4) {
+        if (xhr.status < 200 || xhr.status >= 300) {
+          console.error('Chat HTTP error:', xhr.status);
+          setMessages(prev => prev.map(msg => 
+            msg.id === assistantMessage.id 
+              ? { ...msg, content: 'Sorry, I encountered an error. Please try again.', isStreaming: false }
+              : msg
+          ));
+        }
+        setIsLoading(false);
+      }
+    };
+
+    xhr.onerror = (error) => {
+      console.error('Chat network error:', error);
       setMessages(prev => prev.map(msg => 
         msg.id === assistantMessage.id 
-          ? { ...msg, content: 'Sorry, I encountered an error. Please try again.', isStreaming: false }
+          ? { ...msg, content: 'Network error. Please make sure the server is running.', isStreaming: false }
           : msg
       ));
       setIsLoading(false);
-    }
+    };
+
+    xhr.send(JSON.stringify({
+      message: currentInput,
+      sessionId: SESSION_ID,
+      history: newHistory,
+    }));
   };
 
   const handlePinSubmit = async (pin: string) => {
