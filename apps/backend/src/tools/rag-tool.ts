@@ -17,10 +17,26 @@ export function createRagTool(config: RagToolConfig) {
       query: z.string().describe('The user question about banking products'),
     }),
     execute: async ({ query }) => {
+      const openaiApiKey = config.openaiApiKey;
+      const openrouterApiKey = process.env.OPENROUTER_API_KEY;
+      let apiKey = openrouterApiKey || openaiApiKey;
+      
+      if (apiKey === 'your_openai_api_key' && openrouterApiKey) {
+        apiKey = openrouterApiKey;
+      }
+      
+      const isOpenRouter = apiKey === openrouterApiKey;
+
+      const providerConfig = isOpenRouter
+        ? { baseURL: 'https://openrouter.ai/api/v1', apiKey }
+        : { apiKey };
+
+      const provider = createOpenAI(providerConfig);
+      const modelName = isOpenRouter ? 'openai/text-embedding-3-small' : 'text-embedding-3-small';
+
       // Generate embedding for the query
-      const openai = createOpenAI({ apiKey: config.openaiApiKey });
       const { embeddings } = await embedMany({
-        model: openai.embedding('text-embedding-3-small'),
+        model: provider.embedding(modelName),
         values: [query],
       });
       const queryEmbedding = embeddings[0];

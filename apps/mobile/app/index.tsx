@@ -24,7 +24,7 @@ interface AuthRequiredData {
 }
 
 const API_BASE_URL = 'http://localhost:3000';
-const SESSION_ID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
+const SESSION_ID = 'f1eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'; // Seeded chat session ID for John Doe
 
 export default function ChatScreen() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -147,6 +147,11 @@ export default function ChatScreen() {
                 cardType: authData.suspendData.cardType,
                 last4: authData.suspendData.last4,
               });
+              setMessages(prev => prev.map(msg => 
+                msg.id === assistantMessage.id 
+                  ? { ...msg, isStreaming: false }
+                  : msg
+              ));
               setShowPinModal(true);
               setIsLoading(false);
             } else if (parsed.type === 'STATEMENT_CARD' && parsed.data) {
@@ -157,6 +162,11 @@ export default function ChatScreen() {
               ));
               setIsLoading(false);
             } else if (parsed.type === 'workflow_suspended') {
+              setMessages(prev => prev.map(msg => 
+                msg.id === assistantMessage.id 
+                  ? { ...msg, isStreaming: false }
+                  : msg
+              ));
               setIsLoading(false);
             }
           } catch (e) {
