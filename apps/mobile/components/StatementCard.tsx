@@ -1,5 +1,6 @@
 import { View, Text, StyleSheet, TouchableOpacity, Linking } from 'react-native';
 import type { StatementCardData } from '@boit/types';
+import { Colors, Spacing, Typography, BorderRadius, Shadows } from '../constants/theme';
 
 interface StatementCardProps {
   data: StatementCardData;
@@ -54,17 +55,13 @@ export function StatementCard({ data }: StatementCardProps) {
 
 const styles = StyleSheet.create({
   cardContainer: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
-    marginVertical: 8,
+    backgroundColor: Colors.background,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.lg,
+    marginVertical: Spacing.sm,
     borderWidth: 1,
-    borderColor: '#00838F',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    borderColor: Colors.accent,
+    ...Shadows.card,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -72,28 +69,28 @@ const styles = StyleSheet.create({
   },
   headerIcon: {
     fontSize: 28,
-    marginRight: 12,
+    marginRight: Spacing.md,
   },
   headerTextContainer: {
     flex: 1,
   },
   cardTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#00838F',
+    fontSize: Typography.subtitle.fontSize,
+    fontWeight: Typography.weight.bold,
+    color: Colors.accent,
   },
   cardSubtitle: {
-    fontSize: 12,
-    color: '#666',
+    fontSize: Typography.caption.fontSize,
+    color: Colors.textSecondary,
     marginTop: 2,
   },
   divider: {
     height: 1,
-    backgroundColor: '#E0E0E0',
-    marginVertical: 12,
+    backgroundColor: Colors.border,
+    marginVertical: Spacing.md,
   },
   detailsContainer: {
-    gap: 8,
+    gap: Spacing.sm,
   },
   detailRow: {
     flexDirection: 'row',
@@ -102,28 +99,28 @@ const styles = StyleSheet.create({
   },
   detailLabel: {
     fontSize: 14,
-    color: '#666',
+    color: Colors.textSecondary,
   },
   detailValue: {
     fontSize: 14,
-    fontWeight: '500',
-    color: '#333',
+    fontWeight: Typography.weight.medium,
+    color: Colors.textPrimary,
   },
   feeValue: {
     fontSize: 14,
-    fontWeight: 'bold',
-    color: '#D32F2F',
+    fontWeight: Typography.weight.bold,
+    color: Colors.error,
   },
   downloadButton: {
     marginTop: 14,
-    backgroundColor: '#00838F',
+    backgroundColor: Colors.accent,
     paddingVertical: 10,
-    borderRadius: 20,
+    borderRadius: BorderRadius.pill,
     alignItems: 'center',
   },
   downloadButtonText: {
-    color: '#FFFFFF',
-    fontWeight: '600',
+    color: Colors.textLight,
+    fontWeight: Typography.weight.semibold,
     fontSize: 14,
   },
 });
