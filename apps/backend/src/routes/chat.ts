@@ -180,21 +180,13 @@ export function createChatRoute(
     };
 
     try {
-      // Check for existing active workflow
+      // Check for existing active workflow FIRST
+      // This ensures we handle workflow-specific responses (like "yes" for fee acceptance)
+      // before running general intent classification
       const existingWorkflowState = await getChatSession(supabase, sessionId);
       
-      // Use Intent Router to classify ALL messages (including cancel)
-      const intentResult = await classifyIntent(intentRouter, message);
-      
-      // Handle CANCEL intent via Intent Router
-      if (intentResult.intent === 'CANCEL_WORKFLOW' && existingWorkflowState) {
-        await clearChatSessionWorkflowState(supabase, sessionId);
-        sendToken('Workflow cancelled. How can I help you?');
-        sendDone(null);
-        return;
-      }
-
-      // If there's an active workflow, resume it
+      // If there's an active workflow, let handleActiveWorkflow process the message
+      // It knows the context (fee acceptance, card selection, auth, etc.)
       if (existingWorkflowState) {
         await handleActiveWorkflow({ cardBlockWorkflow, statementWorkflow }, existingWorkflowState, message, sessionId, config, {
           sendToken,
@@ -207,7 +199,10 @@ export function createChatRoute(
         return;
       }
 
-      // No active workflow - route based on intent
+      // No active workflow - classify intent for new conversation
+      const intentResult = await classifyIntent(intentRouter, message);
+      
+      // Route based on intent for NEW conversations only
       if (intentResult.intent === 'BLOCK_CARD') {
         await startCardBlockWorkflow(cardBlockWorkflow, sessionId, config, {
           sendToken,
@@ -523,6 +518,16 @@ export function createChatRoute(
     callbacks: { sendToken: (t: string) => void; sendDone: (ws?: ActiveWorkflowState | null) => void; sendWorkflowSuspended: (ws: ActiveWorkflowState, sd?: any) => void; sendError: (e: string) => void; sendAuthRequired?: (ws: ActiveWorkflowState, sd?: any) => void; sendStatementCard?: (data: any) => void }
   ) {
     try {
+      // Check for explicit cancel keywords FIRST
+      const lower = message.toLowerCase().trim();
+      const cancelKeywords = ['cancel', 'go back', 'never mind', 'stop', 'abort', 'no', 'nope', 'decline'];
+      if (cancelKeywords.some(kw => lower === kw || lower.startsWith(kw + ' ') || lower.endsWith(' ' + kw))) {
+        await clearChatSessionWorkflowState(supabase, sessionId);
+        callbacks.sendToken('Workflow cancelled. How can I help you?');
+        callbacks.sendDone(null);
+        return;
+      }
+
       if (workflowState.workflow_type === 'card-block-workflow') {
         const runId = workflowState.data?.runId as string | undefined;
         const suspendedStep = workflowState.data?.suspendedStep as string | undefined;
