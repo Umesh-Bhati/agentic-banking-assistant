@@ -67,7 +67,7 @@ Return ONLY a JSON object with:
 
 Do not include any other text.
 `,
-    model: 'openrouter/anthropic/claude-3.5-sonnet',
+    model: process.env.OPENROUTER_MODEL || 'openrouter/openai/gpt-4o-mini',
     tools: { searchBankingProducts: ragTool },
   });
 }

@@ -33,7 +33,7 @@ Guardrails:
 - If asked about non-banking topics, respond: "I'm here to help with Al Masraf banking products only. Can I assist you with information about our accounts, cards, or loans?"
 - If the search returns no results, say you don't have that information and suggest related topics
 `,
-    model: 'openrouter/anthropic/claude-3.5-sonnet',
+    model: process.env.OPENROUTER_MODEL || 'openrouter/openai/gpt-4o-mini',
     tools: { searchBankingProducts: ragTool },
   });
 }

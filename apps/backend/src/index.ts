@@ -5,6 +5,13 @@ import { createChatRoute } from './routes/chat.js';
 
 config();
 
+// Clean inline comments and trim environment variables
+for (const key of Object.keys(process.env)) {
+  if (process.env[key]) {
+    process.env[key] = process.env[key]!.split('#')[0].trim();
+  }
+}
+
 export async function createServer(): Promise<FastifyInstance> {
   const server = fastify({
     logger: true,
