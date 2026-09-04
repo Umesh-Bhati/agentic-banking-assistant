@@ -8,7 +8,7 @@
 
 ## Acceptance criteria
 
-- [ ] A Node.js ingestion script exists inside the monorepo.
-- [ ] The script uses the Firecrawl API to extract high-quality, sanitized Markdown content from `almasraf.ae` (e.g. Accounts, Cards, Loans pages).
-- [ ] The extracted markdown is piped into Mastra's `MDocument` capability to safely chunk the text.
-- [ ] The chunks are converted to vectors via OpenAI `text-embedding-3-small` and inserted into the `bank_documents` table in Supabase.
+- [x] A Node.js ingestion script exists inside the monorepo.
+- [x] The script uses the Firecrawl API to extract high-quality, sanitized Markdown content from `almasraf.ae` (e.g. Accounts, Cards, Loans pages).
+- [x] The extracted markdown is piped into Mastra's `MDocument` capability to safely chunk the text.
+- [x] The chunks are converted to vectors via OpenAI `text-embedding-3-small` and inserted into the `bank_documents` table in Supabase.

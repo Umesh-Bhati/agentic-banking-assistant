@@ -8,7 +8,7 @@
 
 ## Acceptance criteria
 
-- [ ] A TypeScript monorepo is established (e.g. using npm, yarn, or pnpm workspaces) containing a placeholder React Native (Expo) app and a Fastify server.
-- [ ] Supabase schema is created supporting `users`, `chat_sessions` (JSONB for state), `bank_documents` (pgvector), `customer_profiles`, `bank_accounts`, `cards`, and `transactions`.
-- [ ] A `seed.sql` script runs on Supabase initialization giving "John Doe" exactly 1 Current Account, 1 Savings Account, 3 Mastercards, and 30 mock transactions.
-- [ ] Basic types interface (e.g., `interface Card`) can be imported safely by both Fastify backend and Expo frontend.
+- [x] A TypeScript monorepo is established (e.g. using npm, yarn, or pnpm workspaces) containing a placeholder React Native (Expo) app and a Fastify server.
+- [x] Supabase schema is created supporting `users`, `chat_sessions` (JSONB for state), `bank_documents` (pgvector), `customer_profiles`, `bank_accounts`, `cards`, and `transactions`.
+- [x] A `seed.sql` script runs on Supabase initialization giving "John Doe" exactly 1 Current Account, 1 Savings Account, 3 Mastercards, and 30 mock transactions.
+- [x] Basic types interface (e.g., `interface Card`) can be imported safely by both Fastify backend and Expo frontend.

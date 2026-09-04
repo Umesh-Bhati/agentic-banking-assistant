@@ -8,8 +8,8 @@
 
 ## Acceptance criteria
 
-- [ ] Add a `chat_sessions` read/write check in Fastify to track `active_workflow_state`.
-- [ ] If the user asks "Block my card," the Top-Level Agent interprets the intent and routes the task to a deterministic Mastra Workflow named `CardBlockWorkflow`.
-- [ ] The workflow queries the Supabase `cards` table for the authenticated user and retrieves their cards.
-- [ ] The bot replies asking "Which of your 3 cards would you like to block?" and the step state (`WAITING_CARD_SELECTION`) is preserved in Postgres.
-- [ ] If the user says "Cancel" or "Go Back", an Intent Router intercepts the message, clears the database state, and responds appropriately.
+- [x] Add a `chat_sessions` read/write check in Fastify to track `active_workflow_state`.
+- [x] If the user asks "Block my card," the Top-Level Agent interprets the intent and routes the task to a deterministic Mastra Workflow named `CardBlockWorkflow`.
+- [x] The workflow queries the Supabase `cards` table for the authenticated user and retrieves their cards.
+- [x] The bot replies asking "Which of your 3 cards would you like to block?" and the step state (`WAITING_CARD_SELECTION`) is preserved in Postgres.
+- [x] If the user says "Cancel" or "Go Back", an Intent Router intercepts the message, clears the database state, and responds appropriately.
