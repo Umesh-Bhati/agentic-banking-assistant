@@ -82,3 +82,9 @@ export interface BankDocument {
   embedding: number[] | null;
   created_at: string;
 }
+
+export interface IntentResult {
+  intent: string;
+  confidence: number;
+  reasoning: string;
+}

@@ -70,8 +70,9 @@ const askCardSelectionStep = createStep({
     const { selectedCardId } = resumeData ?? {};
 
     if (!selectedCardId) {
+      const cardCount = cards?.length || 0;
       return await suspend({
-        reason: 'Waiting for user to select a card',
+        reason: `Which of your ${cardCount} cards would you like to block?`,
         cards: cards || [],
       });
     }

@@ -121,7 +121,7 @@ describe('CardBlockWorkflow - Logic Seam Tests', () => {
     expect(result.suspended.flat()).toContain('ask-card-selection');
     expect(result.suspendPayload).toBeDefined();
     expect(result.suspendPayload['ask-card-selection']).toBeDefined();
-    expect(result.suspendPayload['ask-card-selection'].reason).toContain('Waiting for user');
+    expect(result.suspendPayload['ask-card-selection'].reason).toContain('Which of your');
   }, 10000);
 
   it('should have proper step definitions with suspend/resume', () => {

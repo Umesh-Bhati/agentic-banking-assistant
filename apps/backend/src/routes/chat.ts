@@ -3,7 +3,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { createProductKnowledgeAgent } from '../agents/product-knowledge-agent.js';
 import { createIntentRouterAgent } from '../agents/intent-router-agent.js';
 import { createCardBlockWorkflow, CardBlockWorkflowInput, CardBlockWorkflowOutput } from '../workflows/card-block-workflow.js';
-import type { ActiveWorkflowState, WorkflowState } from '@boit/types';
+import type { ActiveWorkflowState, WorkflowState, IntentResult } from '@boit/types';
 
 interface ChatRequest {
   message: string;
@@ -14,12 +14,6 @@ interface ChatRequest {
 type CoreUserMessage = { role: 'user'; content: string };
 type CoreAssistantMessage = { role: 'assistant'; content: string };
 type CoreMessage = CoreUserMessage | CoreAssistantMessage;
-
-interface IntentResult {
-  intent: string;
-  confidence: number;
-  reasoning: string;
-}
 
 interface WorkflowRunResult {
   status: 'suspended' | 'success' | 'failed';
@@ -67,6 +61,19 @@ async function clearChatSessionWorkflowState(
       updated_at: new Date().toISOString(),
     })
     .eq('id', sessionId);
+}
+
+async function getCustomerId(supabase: SupabaseClient, userId: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from('customer_profiles')
+    .select('id')
+    .eq('user_id', userId)
+    .single();
+
+  if (error || !data) {
+    return null;
+  }
+  return data.id;
 }
 
 export function createChatRoute(
@@ -135,11 +142,11 @@ export function createChatRoute(
       // Check for existing active workflow
       const existingWorkflowState = await getChatSession(supabase, sessionId);
       
-      // Handle CANCEL intent
-      const cancelKeywords = ['cancel', 'go back', 'never mind', 'stop', 'abort'];
-      const isCancel = cancelKeywords.some(kw => message.toLowerCase().includes(kw));
+      // Use Intent Router to classify ALL messages (including cancel)
+      const intentResult = await classifyIntent(intentRouter, message);
       
-      if (isCancel && existingWorkflowState) {
+      // Handle CANCEL intent via Intent Router
+      if (intentResult.intent === 'CANCEL_WORKFLOW' && existingWorkflowState) {
         await clearChatSessionWorkflowState(supabase, sessionId);
         sendToken('Workflow cancelled. How can I help you?');
         sendDone(null);
@@ -157,11 +164,8 @@ export function createChatRoute(
         return;
       }
 
-      // No active workflow - use intent router to classify
-      const intentResult = await classifyIntent(intentRouter, message);
-      
+      // No active workflow - route based on intent
       if (intentResult.intent === 'BLOCK_CARD') {
-        // Start CardBlockWorkflow
         await startCardBlockWorkflow(cardBlockWorkflow, sessionId, config, {
           sendToken,
           sendDone,
@@ -172,7 +176,6 @@ export function createChatRoute(
       }
 
       if (intentResult.intent === 'PRODUCT_QUESTION') {
-        // Use Product Knowledge Agent
         await handleProductQuestion(productAgent, message, history, {
           sendToken,
           sendDone,
@@ -208,6 +211,9 @@ export function createChatRoute(
       if (lower.includes('block') && (lower.includes('card') || lower.includes('stop'))) {
         return { intent: 'BLOCK_CARD', confidence: 0.8, reasoning: 'Keyword match for card blocking' };
       }
+      if (['cancel', 'go back', 'never mind', 'stop', 'abort'].some(kw => lower.includes(kw))) {
+        return { intent: 'CANCEL_WORKFLOW', confidence: 0.7, reasoning: 'Keyword match for cancel' };
+      }
       return { intent: 'PRODUCT_QUESTION', confidence: 0.5, reasoning: 'Default to product question' };
     }
   }
@@ -237,13 +243,21 @@ export function createChatRoute(
     callbacks: { sendToken: (t: string) => void; sendDone: (ws?: ActiveWorkflowState | null) => void; sendWorkflowSuspended: (ws: ActiveWorkflowState, sd?: any) => void; sendError: (e: string) => void }
   ) {
     try {
+      // Get customer_id from user_id (sessionId)
+      const customerId = await getCustomerId(supabase, sessionId);
+      if (!customerId) {
+        callbacks.sendError('Customer profile not found');
+        callbacks.sendDone();
+        return;
+      }
+
       // Create workflow run
       const run = await workflow.createRun();
       
       // Start workflow
       const result = await run.start({ 
         inputData: { 
-          userId: sessionId,
+          userId: customerId,
           supabaseUrl: config.supabaseUrl,
           supabaseKey: config.supabaseServiceKey,
         } as CardBlockWorkflowInput 
@@ -263,8 +277,8 @@ export function createChatRoute(
 
         await updateChatSessionWorkflowState(supabase, sessionId, workflowState);
         
-        // Send the suspend message from workflow
-        const suspendMessage = workflowResult.suspendData?.reason || 'Which card would you like to block?';
+        // Send the suspend message from workflow (should match spec: "Which of your 3 cards...")
+        const suspendMessage = workflowResult.suspendData?.reason || 'Which of your 3 cards would you like to block?';
         callbacks.sendToken(suspendMessage);
         callbacks.sendWorkflowSuspended(workflowState, workflowResult.suspendData);
       } else if (workflowResult.status === 'success') {
@@ -294,6 +308,12 @@ export function createChatRoute(
           throw new Error('Invalid workflow state: missing runId');
         }
 
+        // Get customer_id
+        const customerId = await getCustomerId(supabase, sessionId);
+        if (!customerId) {
+          throw new Error('Customer profile not found');
+        }
+
         // Recreate workflow and resume
         const workflow = createCardBlockWorkflow({ 
           supabaseUrl: config.supabaseUrl,
@@ -307,12 +327,11 @@ export function createChatRoute(
           // User is selecting a card - try to match last 4 digits
           const cardMatch = message.match(/\d{4}/);
           if (cardMatch) {
-            // We need to find the card ID from the last 4 digits
             // Get cards from Supabase to match
             const { data: cards } = await supabase
               .from('cards')
               .select('id, last_4')
-              .eq('customer_id', sessionId)
+              .eq('customer_id', customerId)
               .eq('status', 'ACTIVE');
             
             const matchedCard = cards?.find(c => c.last_4 === cardMatch[0]);
@@ -341,14 +360,14 @@ export function createChatRoute(
           // Still suspended - update state
           const newWorkflowState: ActiveWorkflowState = {
             ...workflowState,
-            step: 'WAITING_FOR_AUTH' as WorkflowState,
+            step: 'WAITING_CARD_SELECTION' as WorkflowState,
             data: { ...workflowState.data, runId, suspendedStep: workflowResult.suspended?.[0] },
             updated_at: new Date().toISOString(),
           };
           
           await updateChatSessionWorkflowState(supabase, sessionId, newWorkflowState);
           
-          const suspendMessage = workflowResult.suspendData?.reason || 'Please confirm with your PIN.';
+          const suspendMessage = workflowResult.suspendData?.reason || 'Please provide the last 4 digits of the card you want to block.';
           callbacks.sendToken(suspendMessage);
           callbacks.sendWorkflowSuspended(newWorkflowState, workflowResult.suspendData);
         } else if (workflowResult.status === 'success') {
