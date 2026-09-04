@@ -1,3 +1,5 @@
+import path from 'path';
+import { fileURLToPath } from 'url';
 import Firecrawl from 'firecrawl';
 import { MDocument } from '@mastra/rag';
 import { embedMany } from 'ai';
@@ -5,7 +7,15 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { config } from 'dotenv';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Fallback search for .env in monorepo root or apps/backend/.env
 config();
+config({ path: path.resolve(__dirname, '../.env') });
+config({ path: path.resolve(__dirname, '../../../.env') });
+config({ path: path.resolve(__dirname, '../../../apps/backend/.env') });
+config({ path: path.resolve(process.cwd(), 'apps/backend/.env') });
 
 interface IngestionConfig {
   firecrawlApiKey: string;
