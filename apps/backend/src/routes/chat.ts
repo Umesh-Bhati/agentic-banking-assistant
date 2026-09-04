@@ -273,7 +273,7 @@ export function createChatRoute(
       if (lower.includes('block') && (lower.includes('card') || lower.includes('stop'))) {
         return { intent: 'BLOCK_CARD', confidence: 0.8, reasoning: 'Keyword match for card blocking' };
       }
-      if (lower.includes('balance') || lower.includes('my account') || lower.includes('my balance') || lower.includes('my transactions')) {
+      if (lower.includes('balance') || lower.includes('my account') || lower.includes('my balance') || lower.includes('my transactions') || lower.includes('my cards') || (lower.includes('show') && lower.includes('card'))) {
         return { intent: 'ACCOUNT_INQUIRY', confidence: 0.9, reasoning: 'Keyword match for account inquiry' };
       }
       if (lower.includes('statement') || lower.includes('transaction history')) {
@@ -357,6 +357,21 @@ export function createChatRoute(
           const formattedAmount = numAmount < 0 ? `${numAmount.toFixed(2)}` : `+${numAmount.toFixed(2)}`;
           summary += `- ${tx.description}: **${formattedAmount} ${tx.currency}**\n`;
         });
+        summary += '\n';
+      }
+
+      // Fetch cards
+      const { data: userCards } = await supabase
+        .from('cards')
+        .select('id, card_type, network, last_4, status')
+        .eq('customer_id', customerId);
+
+      if (userCards && userCards.length > 0) {
+        summary += `**Your Cards:**\n`;
+        userCards.forEach((c) => {
+          summary += `- ${c.network} ${c.card_type} ending in **${c.last_4}** (${c.status})\n`;
+        });
+        summary += '\n';
       }
 
       callbacks.sendToken(summary);
@@ -415,7 +430,17 @@ export function createChatRoute(
         
         // Send the suspend message from workflow (should match spec: "Which of your 3 cards...")
         const suspendData = (workflowResult as any).suspendPayload || workflowResult.suspendData;
-        const suspendMessage = suspendData?.reason || suspendData?.['ask-card-selection']?.reason || 'Which of your 3 cards would you like to block?';
+        const stepData = suspendData?.['ask-card-selection'] || suspendData;
+        
+        let suspendMessage = stepData?.reason || 'Which of your cards would you like to block?';
+        
+        if (stepData?.cards && Array.isArray(stepData.cards) && stepData.cards.length > 0) {
+          suspendMessage += '\n\n';
+          stepData.cards.forEach((c: any, index: number) => {
+            suspendMessage += `${index + 1}. **${c.card_type}** ending in **${c.last_4}** (${c.status})\n`;
+          });
+        }
+        
         callbacks.sendToken(suspendMessage);
         callbacks.sendWorkflowSuspended(workflowState, suspendData);
       } else if (workflowResult.status === 'success') {
@@ -577,7 +602,13 @@ export function createChatRoute(
             callbacks.sendAuthRequired?.(newWorkflowState, stepData);
           } else {
             const stepData = suspendData?.['ask-card-selection'] || suspendData;
-            const suspendMessage = stepData?.reason || 'Please provide the last 4 digits of the card you want to block.';
+            let suspendMessage = stepData?.reason || 'Please provide the last 4 digits of the card you want to block.';
+            if (stepData?.cards && Array.isArray(stepData.cards) && stepData.cards.length > 0) {
+              suspendMessage += '\n\n';
+              stepData.cards.forEach((c: any, index: number) => {
+                suspendMessage += `${index + 1}. **${c.card_type}** ending in **${c.last_4}** (${c.status})\n`;
+              });
+            }
             callbacks.sendToken(suspendMessage);
             callbacks.sendWorkflowSuspended(newWorkflowState, stepData);
           }
