@@ -1,0 +1,21 @@
+{
+  "expo": {
+    "name": "boit-mobile",
+    "slug": "boit-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "boit-mobile",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "ae.almasraf.boit"
+    },
+    "android": {
+      "package": "ae.almasraf.boit"
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "plugins": []
+  }
+}
