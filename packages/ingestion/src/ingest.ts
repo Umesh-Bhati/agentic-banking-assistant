@@ -19,31 +19,39 @@ config({ path: path.resolve(process.cwd(), 'apps/backend/.env') });
 
 interface IngestionConfig {
   firecrawlApiKey: string;
-  openaiApiKey: string;
+  apiKey: string;
+  isOpenRouter: boolean;
   supabaseUrl: string;
   supabaseServiceKey: string;
   urls: string[];
 }
 
-function getConfig(): IngestionConfig {
-  const required = [
-    'FIRECRAWL_API_KEY',
-    'OPENAI_API_KEY',
-    'SUPABASE_URL',
-    'SUPABASE_SERVICE_KEY',
-  ];
+function cleanEnvVal(val?: string): string {
+  if (!val) return '';
+  return val.split('#')[0].trim();
+}
 
-  for (const key of required) {
-    if (!process.env[key]) {
-      throw new Error(`Missing required environment variable: ${key}`);
-    }
-  }
+function getConfig(): IngestionConfig {
+  const firecrawlApiKey = cleanEnvVal(process.env.FIRECRAWL_API_KEY);
+  const openrouterApiKey = cleanEnvVal(process.env.OPENROUTER_API_KEY);
+  const openaiApiKey = cleanEnvVal(process.env.OPENAI_API_KEY);
+  const supabaseUrl = cleanEnvVal(process.env.SUPABASE_URL);
+  const supabaseServiceKey = cleanEnvVal(process.env.SUPABASE_SERVICE_KEY);
+
+  const apiKey = openrouterApiKey || (openaiApiKey !== 'your_openai_api_key' ? openaiApiKey : '');
+  const isOpenRouter = !!openrouterApiKey || !openaiApiKey || openaiApiKey === 'your_openai_api_key';
+
+  if (!firecrawlApiKey) throw new Error('Missing FIRECRAWL_API_KEY in environment');
+  if (!apiKey) throw new Error('Missing OPENROUTER_API_KEY or valid OPENAI_API_KEY in environment');
+  if (!supabaseUrl) throw new Error('Missing SUPABASE_URL in environment');
+  if (!supabaseServiceKey) throw new Error('Missing SUPABASE_SERVICE_KEY in environment');
 
   return {
-    firecrawlApiKey: process.env.FIRECRAWL_API_KEY!,
-    openaiApiKey: process.env.OPENAI_API_KEY!,
-    supabaseUrl: process.env.SUPABASE_URL!,
-    supabaseServiceKey: process.env.SUPABASE_SERVICE_KEY!,
+    firecrawlApiKey,
+    apiKey,
+    isOpenRouter,
+    supabaseUrl,
+    supabaseServiceKey,
     urls: [
       'https://almasraf.ae/en/personal/accounts',
       'https://almasraf.ae/en/personal/cards',
@@ -99,10 +107,16 @@ async function chunkContent(content: string, url: string) {
   }));
 }
 
-async function generateEmbeddings(texts: string[], openaiApiKey: string): Promise<number[][]> {
-  const openai = createOpenAI({ apiKey: openaiApiKey });
+async function generateEmbeddings(texts: string[], apiKey: string, isOpenRouter: boolean): Promise<number[][]> {
+  const providerConfig = isOpenRouter
+    ? { baseURL: 'https://openrouter.ai/api/v1', apiKey }
+    : { apiKey };
+
+  const provider = createOpenAI(providerConfig);
+  const modelName = isOpenRouter ? 'openai/text-embedding-3-small' : 'text-embedding-3-small';
+
   const { embeddings } = await embedMany({
-    model: openai.embedding('text-embedding-3-small'),
+    model: provider.embedding(modelName),
     values: texts,
   });
   return embeddings;
@@ -145,7 +159,7 @@ async function main() {
     if (chunks.length === 0) continue;
 
     const texts = chunks.map(c => c.content);
-    const embeddings = await generateEmbeddings(texts, config.openaiApiKey);
+    const embeddings = await generateEmbeddings(texts, config.apiKey, config.isOpenRouter);
     await insertIntoSupabase(supabase, chunks, embeddings);
     totalChunks += chunks.length;
   }
