@@ -1,0 +1,27 @@
+{
+  "name": "@boit/ingestion",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "ingest": "node dist/ingest.js",
+    "ingest:dev": "tsx src/ingest.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^4.0.58",
+    "@boit/types": "workspace:*",
+    "@mastra/rag": "^2.6.1",
+    "@supabase/supabase-js": "^2.49.0",
+    "ai": "^7.0.0",
+    "dotenv": "^17.4.2",
+    "firecrawl": "^1.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.3"
+  }
+}
