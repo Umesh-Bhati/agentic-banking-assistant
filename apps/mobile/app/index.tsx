@@ -25,6 +25,11 @@ const API_BASE_URL = 'http://localhost:3000';
 const SESSION_ID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
 
 export default function ChatScreen() {
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [email, setEmail] = useState('john.doe@almasraf.ae');
+  const [password, setPassword] = useState('demo1234');
+  const [loginLoading, setLoginLoading] = useState(false);
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -34,6 +39,21 @@ export default function ChatScreen() {
   const [pinModalData, setPinModalData] = useState<{ cardType: string; last4: string } | null>(null);
   const [pinLoading, setPinLoading] = useState(false);
   const [pinError, setPinError] = useState<string | undefined>();
+
+  const handleLogin = () => {
+    if (!email.trim() || !password.trim()) return;
+    setLoginLoading(true);
+    setTimeout(() => {
+      setLoginLoading(false);
+      setIsLoggedIn(true);
+    }, 600);
+  };
+
+  const handleLogout = () => {
+    setIsLoggedIn(false);
+    setMessages([]);
+    setHistory([]);
+  };
 
   const scrollToBottom = useCallback(() => {
     flatListRef.current?.scrollToEnd({ animated: true });
@@ -232,6 +252,53 @@ export default function ChatScreen() {
     </View>
   );
 
+  if (!isLoggedIn) {
+    return (
+      <View style={styles.loginContainer}>
+        <View style={styles.loginCard}>
+          <Text style={styles.loginLogo}>🏦</Text>
+          <Text style={styles.loginTitle}>Al Masraf Mobile Banking</Text>
+          <Text style={styles.loginSubtitle}>Log in to access your Banking Assistant</Text>
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Email Address</Text>
+            <TextInput
+              style={styles.loginInput}
+              value={email}
+              onChangeText={setEmail}
+              placeholder="name@almasraf.ae"
+              autoCapitalize="none"
+              keyboardType="email-address"
+            />
+          </View>
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Password / Passcode</Text>
+            <TextInput
+              style={styles.loginInput}
+              value={password}
+              onChangeText={setPassword}
+              placeholder="••••••••"
+              secureTextEntry
+            />
+          </View>
+
+          <TouchableOpacity 
+            style={[styles.loginButton, loginLoading && styles.sendButtonDisabled]}
+            onPress={handleLogin}
+            disabled={loginLoading}
+          >
+            {loginLoading ? (
+              <ActivityIndicator color="#FFFFFF" size="small" />
+            ) : (
+              <Text style={styles.loginButtonText}>Log In to Mobile Banking</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <KeyboardAvoidingView
       style={styles.container}
@@ -239,8 +306,13 @@ export default function ChatScreen() {
       keyboardVerticalOffset={0}
     >
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Al Masraf Assistant</Text>
-        <Text style={styles.headerSubtitle}>Ask about our banking products</Text>
+        <View style={styles.headerTop}>
+          <Text style={styles.headerTitle}>Al Masraf Assistant</Text>
+          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+            <Text style={styles.logoutButtonText}>Log Out</Text>
+          </TouchableOpacity>
+        </View>
+        <Text style={styles.headerSubtitle}>Logged in as John Doe</Text>
       </View>
       
       <FlatList
@@ -290,12 +362,98 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#fff',
   },
+  loginContainer: {
+    flex: 1,
+    backgroundColor: '#00838F',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  loginCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  loginLogo: {
+    fontSize: 48,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  loginTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#00838F',
+    textAlign: 'center',
+  },
+  loginSubtitle: {
+    fontSize: 13,
+    color: '#666',
+    textAlign: 'center',
+    marginTop: 4,
+    marginBottom: 24,
+  },
+  inputGroup: {
+    marginBottom: 16,
+  },
+  inputLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#444',
+    marginBottom: 6,
+  },
+  loginInput: {
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    backgroundColor: '#FAFAFA',
+    color: '#333',
+  },
+  loginButton: {
+    backgroundColor: '#00838F',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  loginButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
   header: {
     padding: 20,
     paddingBottom: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#E0E0E0',
     backgroundColor: '#fff',
+  },
+  headerTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  logoutButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    backgroundColor: '#F5F5F5',
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+  },
+  logoutButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#D32F2F',
   },
   headerTitle: {
     fontSize: 22,
