@@ -603,27 +603,35 @@ export async function createChatRoute(
       }
 
       
+      
       const msg = message.toLowerCase();
       const today = new Date();
       let fromDate;
       let toDate = new Date();
       
-      if (msg.includes('last month') || msg.includes('past month')) {
+      const monthMatch = msg.match(/(?:last|past)\s+(\d+)\s+months?/);
+      if (monthMatch) {
+        fromDate = new Date(); fromDate.setMonth(today.getMonth() - parseInt(monthMatch[1]));
+      } else if (msg.includes('last month') || msg.includes('past month')) {
         fromDate = new Date(); fromDate.setMonth(today.getMonth() - 1);
-      } else if (msg.includes('last 3 month') || msg.includes('past 3 month')) {
-        fromDate = new Date(); fromDate.setMonth(today.getMonth() - 3);
-      } else if (msg.includes('last 6 month') || msg.includes('past 6 month')) {
-        fromDate = new Date(); fromDate.setMonth(today.getMonth() - 6);
       } else if (msg.includes('last year') || msg.includes('past year')) {
         fromDate = new Date(); fromDate.setFullYear(today.getFullYear() - 1);
+      } else if (msg.includes('last week') || msg.includes('past week')) {
+        fromDate = new Date(); fromDate.setDate(today.getDate() - 7);
+      } else if (msg.includes('yesterday')) {
+        fromDate = new Date(); fromDate.setDate(today.getDate() - 1);
       }
 
       let fromDateStr = fromDate ? fromDate.toISOString().split('T')[0] : undefined;
       let toDateStr = fromDate ? toDate.toISOString().split('T')[0] : undefined;
 
       const { data: accounts } = await supabase.from('bank_accounts').select('id, type').eq('customer_id', customerId);
-      const matched = accounts?.find(a => msg.includes(a.type.toLowerCase()));
+      const matched = accounts?.find(a => {
+        const t = a.type.toLowerCase();
+        return msg.includes(t) || msg.includes(t.replace(/s$/, ''));
+      });
       const accountId = matched ? matched.id : undefined;
+
 
       const run = await workflow.createRun();
       const result = await run.start({ 
@@ -825,6 +833,7 @@ export async function createChatRoute(
         let shouldReprocess = false;
         
         
+        
         if (workflowState.step === 'WAITING_DATE_RANGE') {
           // Parse dates from message
           const msg = message.toLowerCase();
@@ -832,17 +841,20 @@ export async function createChatRoute(
           let fromDate = new Date();
           let toDate = new Date();
           
-          if (msg.includes('last month') || msg.includes('past month')) {
+          const monthMatch = msg.match(/(?:last|past)\s+(\d+)\s+months?/);
+          if (monthMatch) {
+            fromDate.setMonth(today.getMonth() - parseInt(monthMatch[1]));
+          } else if (msg.includes('last month') || msg.includes('past month')) {
             fromDate.setMonth(today.getMonth() - 1);
-          } else if (msg.includes('last 3 month') || msg.includes('past 3 month')) {
-            fromDate.setMonth(today.getMonth() - 3);
-          } else if (msg.includes('last 6 month') || msg.includes('past 6 month')) {
-            fromDate.setMonth(today.getMonth() - 6);
           } else if (msg.includes('last year') || msg.includes('past year')) {
             fromDate.setFullYear(today.getFullYear() - 1);
+          } else if (msg.includes('last week') || msg.includes('past week')) {
+            fromDate.setDate(today.getDate() - 7);
+          } else if (msg.includes('yesterday')) {
+            fromDate.setDate(today.getDate() - 1);
           } else {
-            // default to 30 days
-            fromDate.setDate(today.getDate() - 30);
+            // fallback
+            fromDate.setMonth(today.getMonth() - 1);
           }
           
           resumeData = { 
@@ -850,11 +862,14 @@ export async function createChatRoute(
             toDate: toDate.toISOString().split('T')[0] 
           };
         } else if (workflowState.step === 'WAITING_ACCOUNT_SELECTION') {
-
           // simple mock selection matching
           const { data: accounts } = await supabase.from('bank_accounts').select('id, type').eq('customer_id', customerId);
           const lowerMsg = message.toLowerCase();
-          const matched = accounts?.find(a => lowerMsg.includes(a.type.toLowerCase())) || accounts?.[0];
+          const matched = accounts?.find(a => {
+            const t = a.type.toLowerCase();
+            return lowerMsg.includes(t) || lowerMsg.includes(t.replace(/s$/, ''));
+          }) || accounts?.[0];
+
           if (matched) {
             resumeData = { accountId: matched.id };
           } else {
