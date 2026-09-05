@@ -343,7 +343,7 @@ export async function createChatRoute(
       }
 
       if (intentResult.intent === 'STATEMENT_REQUEST') {
-        await startStatementWorkflow(statementWorkflow, sessionId, config, {
+        await startStatementWorkflow(message, statementWorkflow, sessionId, config, {
           sendToken,
           sendDone,
           sendWorkflowSuspended,
@@ -588,6 +588,7 @@ export async function createChatRoute(
   }
 
   async function startStatementWorkflow(
+    message: string,
     workflow: any,
     sessionId: string,
     config: { supabaseUrl: string; supabaseServiceKey: string },
@@ -601,14 +602,41 @@ export async function createChatRoute(
         return;
       }
 
+      
+      const msg = message.toLowerCase();
+      const today = new Date();
+      let fromDate;
+      let toDate = new Date();
+      
+      if (msg.includes('last month') || msg.includes('past month')) {
+        fromDate = new Date(); fromDate.setMonth(today.getMonth() - 1);
+      } else if (msg.includes('last 3 month') || msg.includes('past 3 month')) {
+        fromDate = new Date(); fromDate.setMonth(today.getMonth() - 3);
+      } else if (msg.includes('last 6 month') || msg.includes('past 6 month')) {
+        fromDate = new Date(); fromDate.setMonth(today.getMonth() - 6);
+      } else if (msg.includes('last year') || msg.includes('past year')) {
+        fromDate = new Date(); fromDate.setFullYear(today.getFullYear() - 1);
+      }
+
+      let fromDateStr = fromDate ? fromDate.toISOString().split('T')[0] : undefined;
+      let toDateStr = fromDate ? toDate.toISOString().split('T')[0] : undefined;
+
+      const { data: accounts } = await supabase.from('bank_accounts').select('id, type').eq('customer_id', customerId);
+      const matched = accounts?.find(a => msg.includes(a.type.toLowerCase()));
+      const accountId = matched ? matched.id : undefined;
+
       const run = await workflow.createRun();
       const result = await run.start({ 
         inputData: { 
           userId: customerId,
           supabaseUrl: config.supabaseUrl,
           supabaseKey: config.supabaseServiceKey,
+          fromDate: fromDateStr,
+          toDate: toDateStr,
+          accountId: accountId
         } 
       });
+
 
       const workflowResult = result as unknown as any;
 
