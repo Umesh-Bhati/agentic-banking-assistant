@@ -57,7 +57,7 @@ export interface CustomerProfile {
   updated_at: string;
 }
 
-export type WorkflowState = 'IDLE' | 'WAITING_CARD_SELECTION' | 'WAITING_FOR_AUTH' | 'WAITING_FEE_ACCEPTANCE' | 'WAITING_DATE_RANGE' | 'COMPLETED';
+export type WorkflowState = 'IDLE' | 'WAITING_CARD_SELECTION' | 'WAITING_FOR_AUTH' | 'WAITING_FEE_ACCEPTANCE' | 'WAITING_DATE_RANGE' | 'WAITING_ACCOUNT_SELECTION' | 'COMPLETED';
 
 export interface ActiveWorkflowState {
   workflow_type: string;

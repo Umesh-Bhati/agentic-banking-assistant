@@ -16,29 +16,71 @@ const statementWorkflowStateSchema = z.object({
   accepted: z.boolean().optional(),
 });
 
-// Step 1: Extract/validate statement parameters
-const extractParamsStep = createStep({
-  id: 'extract-statement-params',
-  description: 'Extract and set date range for statement generation',
+// Step 1: Ask for date range if not provided
+const askDateRangeStep = createStep({
+  id: 'ask-date-range',
+  description: 'Ask user for date range for statement generation',
   inputSchema: statementWorkflowStateSchema,
   outputSchema: statementWorkflowStateSchema,
-  execute: async ({ inputData }) => {
-    const today = new Date();
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(today.getDate() - 30);
-
-    const fromDate = inputData.fromDate || thirtyDaysAgo.toISOString().split('T')[0];
-    const toDate = inputData.toDate || today.toISOString().split('T')[0];
-
-    return {
-      ...inputData,
-      fromDate,
-      toDate,
-    };
+  suspendSchema: z.object({
+    reason: z.string(),
+  }),
+  resumeSchema: z.object({
+    fromDate: z.string(),
+    toDate: z.string(),
+  }),
+  execute: async ({ inputData, resumeData, suspend }) => {
+    if (resumeData) {
+      return { ...inputData, ...resumeData };
+    }
+    if (!inputData.fromDate || !inputData.toDate) {
+      return await suspend({
+        reason: 'What time period would you like the statement for? (e.g. Last month, past 3 months)',
+      });
+    }
+    return inputData;
   },
 });
 
-// Step 2: Ask for fee acceptance (25 AED)
+// Step 2: Ask for account selection if multiple accounts exist
+const askAccountSelectionStep = createStep({
+  id: 'ask-account-selection',
+  description: 'Ask user to select account if multiple exist',
+  inputSchema: statementWorkflowStateSchema,
+  outputSchema: statementWorkflowStateSchema,
+  suspendSchema: z.object({
+    reason: z.string(),
+    accounts: z.array(z.any()),
+  }),
+  resumeSchema: z.object({
+    accountId: z.string(),
+  }),
+  execute: async ({ inputData, resumeData, suspend }) => {
+    if (resumeData && resumeData.accountId) {
+      return { ...inputData, accountId: resumeData.accountId };
+    }
+    if (!inputData.accountId) {
+      const { createClient } = await import('@supabase/supabase-js');
+      const supabase = createClient(inputData.supabaseUrl!, inputData.supabaseKey!);
+      const { data: accounts } = await supabase
+        .from('bank_accounts')
+        .select('id, account_number, type, currency, balance')
+        .eq('customer_id', inputData.userId!);
+        
+      if (accounts && accounts.length > 1) {
+        return await suspend({
+          reason: 'Which account would you like the statement for?',
+          accounts,
+        });
+      } else if (accounts && accounts.length === 1) {
+        return { ...inputData, accountId: accounts[0].id };
+      }
+    }
+    return inputData;
+  },
+});
+
+// Step 3: Ask for fee acceptance (25 AED)
 const askFeeAcceptanceStep = createStep({
   id: 'ask-fee-acceptance',
   description: 'Ask user to accept statement generation fee of 25 AED',
@@ -71,7 +113,7 @@ const askFeeAcceptanceStep = createStep({
   },
 });
 
-// Step 3: Deduct fee and generate statement payload
+// Step 4: Deduct fee and generate statement payload
 const deductFeeAndGenerateStep = createStep({
   id: 'deduct-fee-and-generate',
   description: 'Deduct fee from account and output statement card payload',
@@ -93,7 +135,6 @@ const deductFeeAndGenerateStep = createStep({
     const { createClient } = await import('@supabase/supabase-js');
     const supabase = createClient(inputData.supabaseUrl!, inputData.supabaseKey!);
 
-    // Fetch user account
     let query = supabase
       .from('bank_accounts')
       .select('id, account_number, balance, currency')
@@ -103,7 +144,6 @@ const deductFeeAndGenerateStep = createStep({
       query = query.eq('id', inputData.accountId);
     }
     
-    // Use limit(1).single() because a user can have multiple accounts (e.g. CURRENT and SAVINGS)
     const { data: account, error: accountError } = await query.limit(1).single();
 
     if (accountError || !account) {
@@ -112,7 +152,6 @@ const deductFeeAndGenerateStep = createStep({
 
     const feeAmount = 25.00;
 
-    // Deduct fee: insert transaction
     const { error: txError } = await supabase
       .from('transactions')
       .insert({
@@ -129,7 +168,6 @@ const deductFeeAndGenerateStep = createStep({
       throw new Error(`Failed to record fee transaction: ${txError.message}`);
     }
 
-    // Update account balance
     const newBalance = (account.balance || 0) - feeAmount;
     await supabase
       .from('bank_accounts')
@@ -143,7 +181,7 @@ const deductFeeAndGenerateStep = createStep({
       success: true,
       type: 'STATEMENT_CARD',
       data: {
-        url: 'https://almasraf.ae/statements/statement-2026.pdf',
+        url: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
         fee: feeAmount,
         currency: account.currency || 'AED',
         accountNumber: account.account_number,
@@ -181,7 +219,8 @@ export const createStatementWorkflow = (config: StatementWorkflowConfig) => {
       message: z.string(),
     }),
   })
-    .then(extractParamsStep)
+    .then(askDateRangeStep)
+    .then(askAccountSelectionStep)
     .then(askFeeAcceptanceStep)
     .then(deductFeeAndGenerateStep)
     .commit();

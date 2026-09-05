@@ -619,7 +619,7 @@ export async function createChatRoute(
           : workflowResult.suspended?.[0];
         const workflowState: ActiveWorkflowState = {
           workflow_type: 'statement-workflow',
-          step: 'WAITING_FEE_ACCEPTANCE',
+          step: suspendedStepName === 'ask-date-range' ? 'WAITING_DATE_RANGE' : suspendedStepName === 'ask-account-selection' ? 'WAITING_ACCOUNT_SELECTION' : 'WAITING_FEE_ACCEPTANCE',
           data: { runId: workflowResult.runId, suspendedStep: suspendedStepName },
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -628,8 +628,11 @@ export async function createChatRoute(
         await updateChatSessionWorkflowState(supabase, sessionId, workflowState);
         
         const suspendData = workflowResult.suspendPayload || workflowResult.suspendData;
-        const stepData = suspendData?.['ask-fee-acceptance'] || suspendData;
-        const suspendMessage = stepData?.reason || 'Generating this statement will cost 25 AED. Do you accept?';
+        const stepData = suspendData?.[suspendedStepName] || suspendData;
+        let suspendMessage = stepData?.reason || 'Generating this statement will cost 25 AED. Do you accept?';
+        if (suspendedStepName === 'ask-account-selection' && stepData?.accounts) {
+          suspendMessage += '\n\n' + stepData.accounts.map((a, i) => `${i + 1}. ${a.type} (${a.account_number})`).join('\n');
+        }
         await streamText(suspendMessage, callbacks.sendToken);
         callbacks.sendWorkflowSuspended(workflowState, stepData);
       } else if (workflowResult.status === 'success') {
@@ -792,7 +795,23 @@ export async function createChatRoute(
 
         let resumeData: any = {};
         let shouldReprocess = false;
-        if (workflowState.step === 'WAITING_FEE_ACCEPTANCE') {
+        
+        if (workflowState.step === 'WAITING_DATE_RANGE') {
+          resumeData = { fromDate: '2026-08-01', toDate: '2026-09-01' }; // Simple mock dates
+        } else if (workflowState.step === 'WAITING_ACCOUNT_SELECTION') {
+          // simple mock selection matching
+          const { data: accounts } = await supabase.from('bank_accounts').select('id, type').eq('customer_id', customerId);
+          const lowerMsg = message.toLowerCase();
+          const matched = accounts?.find(a => lowerMsg.includes(a.type.toLowerCase())) || accounts?.[0];
+          if (matched) {
+            resumeData = { accountId: matched.id };
+          } else {
+            await streamText('Could not understand account selection. Please specify Current or Savings.', callbacks.sendToken);
+            callbacks.sendWorkflowSuspended(workflowState);
+            return;
+          }
+        } else if (workflowState.step === 'WAITING_FEE_ACCEPTANCE') {
+
           const lower = message.toLowerCase().trim();
           const accepted = ['yes', 'accept', 'ok', 'sure', 'confirm', 'agree', 'yep', 'yeah', 'proceed'].some(kw => lower === kw || lower.startsWith(kw + ' ') || lower.endsWith(' ' + kw));
           const rejected = ['no', 'nope', 'cancel', 'stop', 'decline', 'reject', 'dont', "don't", 'not'].some(kw => lower === kw || lower.startsWith(kw + ' ') || lower.endsWith(' ' + kw));
@@ -833,8 +852,11 @@ export async function createChatRoute(
           await updateChatSessionWorkflowState(supabase, sessionId, newWorkflowState);
 
           const suspendData = workflowResult.suspendPayload || workflowResult.suspendData;
-          const stepData = suspendData?.['ask-fee-acceptance'] || suspendData;
-          const suspendMessage = stepData?.reason || 'Generating this statement will cost 25 AED. Do you accept?';
+          const stepData = suspendData?.[suspendedStepName] || suspendData;
+        let suspendMessage = stepData?.reason || 'Generating this statement will cost 25 AED. Do you accept?';
+        if (suspendedStepName === 'ask-account-selection' && stepData?.accounts) {
+          suspendMessage += '\n\n' + stepData.accounts.map((a, i) => `${i + 1}. ${a.type} (${a.account_number})`).join('\n');
+        }
           await streamText(suspendMessage, callbacks.sendToken);
           callbacks.sendWorkflowSuspended(newWorkflowState, stepData);
         } else if (workflowResult.status === 'success') {
