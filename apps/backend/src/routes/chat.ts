@@ -273,7 +273,7 @@ export async function createChatRoute(
 
     // Emit a tool call for the initial intent classification phase
     // so the UI can show a native "Thinking..." or "Analyzing..." state
-    const routingToolId = Date.now().toString();
+    const routingToolId = crypto.randomUUID();
     sendToolCall('RoutingIntent', routingToolId, {});
     
     try {
@@ -346,7 +346,7 @@ export async function createChatRoute(
       
       if (!existingWorkflowState || reprocess) {
          if (reprocess) {
-           const newToolId = Date.now().toString();
+           const newToolId = crypto.randomUUID();
            sendToolCall('RoutingIntent', newToolId, {});
            intentResult = await classifyIntent(intentRouter, message);
            sendToolResult('RoutingIntent', newToolId, { intent: intentResult.intent });

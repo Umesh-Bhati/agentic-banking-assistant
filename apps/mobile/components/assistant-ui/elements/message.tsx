@@ -21,12 +21,16 @@ const UserText: TextMessagePartComponent = ({ text }) => {
   );
 };
 
+import Markdown from "react-native-markdown-display";
+
 const AssistantText: TextMessagePartComponent = ({ text }) => {
   const { colors } = useTheme();
   return (
-    <Text style={[styles.assistantText, { color: colors.foreground }]}>
-      {text}
-    </Text>
+    <View style={{overflow: 'hidden' }}>
+      <Markdown style={{ body: { ...styles.assistantText, color: colors.foreground } }}>
+        {text}
+      </Markdown>
+    </View>
   );
 };
 
@@ -174,6 +178,7 @@ const styles = StyleSheet.create({
   },
   assistantContainer: {
     alignItems: "flex-start",
+    width: "100%",
   },
   assistantContent: {
     paddingHorizontal: 2,

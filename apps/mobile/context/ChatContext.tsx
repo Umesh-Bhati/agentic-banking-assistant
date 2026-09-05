@@ -60,6 +60,7 @@ interface ChatContextType {
   inputText: string;
   setInputText: (t: string) => void;
   isLoading: boolean;
+  isSessionLoading: boolean;
   
   showPinModal: boolean;
   pinModalData: { cardType: string; last4: string } | null;
@@ -74,7 +75,7 @@ interface ChatContextType {
   handlePinCancel: () => void;
   
   flatListRef: React.RefObject<FlatList<Message> | null>;
-  runtime: AssistantRuntime;
+  chatModelAdapter: any;
 }
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
@@ -91,6 +92,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isSessionLoading, setIsSessionLoading] = useState(false);
   const flatListRef = useRef<FlatList<Message>>(null);
   
   const [showPinModal, setShowPinModal] = useState(false);
@@ -170,13 +172,18 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
                 toolCalls.push({ type: 'tool-call', toolName: parsed.toolName, toolCallId: parsed.toolCallId, args: parsed.args || {} });
                 yield { content: [{ type: 'text', text }, ...toolCalls] };
               } else if (parsed.type === 'tool_result') {
-                toolCalls.push({ type: 'tool-result', toolName: parsed.toolName, toolCallId: parsed.toolCallId, result: parsed.result || {} });
+                const existingIdx = toolCalls.findIndex(t => t.toolCallId === parsed.toolCallId);
+                if (existingIdx !== -1) {
+                  toolCalls[existingIdx] = { ...toolCalls[existingIdx], result: parsed.result || {} };
+                } else {
+                  toolCalls.push({ type: 'tool-call', toolName: parsed.toolName, toolCallId: parsed.toolCallId, args: {}, result: parsed.result || {} });
+                }
                 yield { content: [{ type: 'text', text }, ...toolCalls] };
               } else if (parsed.type === 'auth_required') {
                 setShowPinModal(true);
                 setPinModalData({ cardType: parsed.suspendData.cardType, last4: parsed.suspendData.last4 });
               } else if (parsed.type === 'STATEMENT_CARD' && parsed.data) {
-                toolCalls.push({ type: 'tool-call', toolName: 'StatementCard', toolCallId: Date.now().toString(), args: parsed.data });
+                toolCalls.push({ type: 'tool-call', toolName: 'StatementCard', toolCallId: generateUUID(), args: parsed.data });
                 yield { content: [{ type: 'text', text }, ...toolCalls] };
               }
             } catch (e) {}
@@ -185,8 +192,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       }
     }
   }), [sessionId]);
-
-  const runtime = useLocalRuntime(chatModelAdapter);
 
   const fetchSessions = async () => {
     try {
@@ -202,7 +207,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
   const loadSession = async (id: string) => {
     setSessionId(id);
-    setMessages([]);
+    setIsSessionLoading(true);
     try {
       const res = await fetch(`${API_BASE_URL}/api/chat/sessions/${id}/messages`);
       if (res.ok) {
@@ -217,12 +222,15 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       }
     } catch (e) {
       console.warn('Failed to fetch messages:', e);
+    } finally {
+      setIsSessionLoading(false);
     }
   };
 
   const handleNewChat = () => {
     setSessionId(generateUUID());
     setMessages([]);
+    setIsSessionLoading(false);
   };
 
   const deleteSession = async (id: string) => {
@@ -459,6 +467,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         inputText,
         setInputText,
         isLoading,
+        isSessionLoading,
         showPinModal,
         pinModalData,
         pinLoading,
@@ -470,7 +479,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         handlePinSubmit,
         handlePinCancel,
         flatListRef,
-        runtime,
+        chatModelAdapter,
       }}
     >
       {children}
