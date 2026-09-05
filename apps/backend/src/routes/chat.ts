@@ -796,9 +796,33 @@ export async function createChatRoute(
         let resumeData: any = {};
         let shouldReprocess = false;
         
+        
         if (workflowState.step === 'WAITING_DATE_RANGE') {
-          resumeData = { fromDate: '2026-08-01', toDate: '2026-09-01' }; // Simple mock dates
+          // Parse dates from message
+          const msg = message.toLowerCase();
+          const today = new Date();
+          let fromDate = new Date();
+          let toDate = new Date();
+          
+          if (msg.includes('last month') || msg.includes('past month')) {
+            fromDate.setMonth(today.getMonth() - 1);
+          } else if (msg.includes('last 3 month') || msg.includes('past 3 month')) {
+            fromDate.setMonth(today.getMonth() - 3);
+          } else if (msg.includes('last 6 month') || msg.includes('past 6 month')) {
+            fromDate.setMonth(today.getMonth() - 6);
+          } else if (msg.includes('last year') || msg.includes('past year')) {
+            fromDate.setFullYear(today.getFullYear() - 1);
+          } else {
+            // default to 30 days
+            fromDate.setDate(today.getDate() - 30);
+          }
+          
+          resumeData = { 
+            fromDate: fromDate.toISOString().split('T')[0], 
+            toDate: toDate.toISOString().split('T')[0] 
+          };
         } else if (workflowState.step === 'WAITING_ACCOUNT_SELECTION') {
+
           // simple mock selection matching
           const { data: accounts } = await supabase.from('bank_accounts').select('id, type').eq('customer_id', customerId);
           const lowerMsg = message.toLowerCase();
