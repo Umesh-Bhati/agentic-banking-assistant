@@ -181,7 +181,7 @@ const deductFeeAndGenerateStep = createStep({
       success: true,
       type: 'STATEMENT_CARD',
       data: {
-        url: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+        url: `http://localhost:3000/api/statements?accountId=${account.id}&fromDate=${inputData.fromDate || ''}&toDate=${inputData.toDate || ''}`,
         fee: feeAmount,
         currency: account.currency || 'AED',
         accountNumber: account.account_number,

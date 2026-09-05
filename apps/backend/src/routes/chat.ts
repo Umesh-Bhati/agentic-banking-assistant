@@ -631,7 +631,7 @@ export async function createChatRoute(
         const stepData = suspendData?.[suspendedStepName] || suspendData;
         let suspendMessage = stepData?.reason || 'Generating this statement will cost 25 AED. Do you accept?';
         if (suspendedStepName === 'ask-account-selection' && stepData?.accounts) {
-          suspendMessage += '\n\n' + stepData.accounts.map((a, i) => `${i + 1}. ${a.type} (${a.account_number})`).join('\n');
+          suspendMessage += '\n\n' + stepData.accounts.map((a: any, i: number) => `${i + 1}. ${a.type} (${a.account_number})`).join('\n');
         }
         await streamText(suspendMessage, callbacks.sendToken);
         callbacks.sendWorkflowSuspended(workflowState, stepData);
@@ -855,7 +855,7 @@ export async function createChatRoute(
           const stepData = suspendData?.[suspendedStepName] || suspendData;
         let suspendMessage = stepData?.reason || 'Generating this statement will cost 25 AED. Do you accept?';
         if (suspendedStepName === 'ask-account-selection' && stepData?.accounts) {
-          suspendMessage += '\n\n' + stepData.accounts.map((a, i) => `${i + 1}. ${a.type} (${a.account_number})`).join('\n');
+          suspendMessage += '\n\n' + stepData.accounts.map((a: any, i: number) => `${i + 1}. ${a.type} (${a.account_number})`).join('\n');
         }
           await streamText(suspendMessage, callbacks.sendToken);
           callbacks.sendWorkflowSuspended(newWorkflowState, stepData);
