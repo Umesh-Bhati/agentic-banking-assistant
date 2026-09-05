@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, Modal, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, Modal, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
+import * as LocalAuthentication from 'expo-local-authentication';
 import { Colors, Spacing, Typography, BorderRadius, Shadows } from '../constants/theme';
 
 interface PinModalProps {
@@ -22,10 +23,26 @@ export const PinModal: React.FC<PinModalProps> = ({
   error,
 }) => {
   const [pin, setPin] = useState('');
+  const [supportedBiometrics, setSupportedBiometrics] = useState<LocalAuthentication.AuthenticationType[]>([]);
+  const [authMode, setAuthMode] = useState<'PIN' | 'BIOMETRIC'>('PIN');
 
   useEffect(() => {
     setPin('');
+    setAuthMode('PIN');
   }, [visible]);
+
+  useEffect(() => {
+    const checkBiometrics = async () => {
+      const hasHardware = await LocalAuthentication.hasHardwareAsync();
+      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+      
+      if (hasHardware && isEnrolled) {
+        const types = await LocalAuthentication.supportedAuthenticationTypesAsync();
+        setSupportedBiometrics(types);
+      }
+    };
+    checkBiometrics();
+  }, []);
 
   const handleSubmit = () => {
     if (pin.length === 4) {
@@ -39,78 +56,130 @@ export const PinModal: React.FC<PinModalProps> = ({
     }
   };
 
+  const handleBiometricAuth = async () => {
+    setAuthMode('BIOMETRIC');
+    try {
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: `Authenticate to block your ${cardType} card ending in ${last4}`,
+        fallbackLabel: 'Use Passcode',
+      });
+
+      if (result.success) {
+        onAuthSubmit('BIOMETRIC_SUCCESS');
+      } else {
+        setAuthMode('PIN');
+      }
+    } catch (err) {
+      console.warn('Biometric auth error:', err);
+      setAuthMode('PIN');
+    }
+  };
+
   if (!visible) return null;
+
+  const hasFaceId = supportedBiometrics.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION);
+  const hasFingerprint = supportedBiometrics.includes(LocalAuthentication.AuthenticationType.FINGERPRINT) || 
+                         supportedBiometrics.includes(LocalAuthentication.AuthenticationType.IRIS);
 
   return (
     <Modal visible={visible} animationType="slide" transparent={true}>
-      <View style={styles.overlay}>
-        <View style={styles.modalContainer}>
-          <View style={styles.header}>
-            <Text style={styles.title}>Authorize Card Block</Text>
-          </View>
-          
-          <View style={styles.cardInfo}>
-            <Text style={styles.cardType}>{cardType} Card</Text>
-            <Text style={styles.cardLast4}>Ending in {last4}</Text>
-          </View>
-
-          <View style={styles.authOptions}>
-            <TouchableOpacity style={styles.authOption} activeOpacity={0.7}>
-              <Text style={styles.authOptionText}>🔐 Face ID</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.authOption} activeOpacity={0.7}>
-              <Text style={styles.authOptionText}>👁️ Fingerprint</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.authOptionSelected} activeOpacity={0.7}>
-              <Text style={styles.authOptionText}>🔢 PIN</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.pinContainer}>
-            <Text style={styles.pinLabel}>Enter 4-digit PIN</Text>
-            <View style={styles.pinInputContainer}>
-              {[0, 1, 2, 3].map((i) => (
-                <View key={i} style={styles.pinBox}>
-                  <Text style={styles.pinChar}>{pin[i] ? '●' : ''}</Text>
-                </View>
-              ))}
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior="padding"
+      >
+        <View style={styles.overlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.header}>
+              <Text style={styles.title}>Authorize Card Block</Text>
             </View>
-            <TextInput
-              style={styles.hiddenInput}
-              value={pin}
-              onChangeText={handlePinChange}
-              maxLength={4}
-              keyboardType="numeric"
-              autoFocus={true}
-              placeholder=" "
-              secureTextEntry={true}
-            />
-          </View>
+            
+            <View style={styles.cardInfo}>
+              <Text style={styles.cardType}>{cardType} Card</Text>
+              <Text style={styles.cardLast4}>Ending in {last4}</Text>
+            </View>
 
-          {error && <Text style={styles.errorText}>{error}</Text>}
-
-          <View style={styles.buttonContainer}>
-            <TouchableOpacity
-              style={[styles.button, styles.cancelButton]}
-              onPress={onCancel}
-              disabled={loading}
-            >
-              <Text style={styles.buttonText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.button, styles.submitButton, pin.length !== 4 && styles.buttonDisabled]}
-              onPress={handleSubmit}
-              disabled={loading || pin.length !== 4}
-            >
-              {loading ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <Text style={styles.buttonText}>Authorize</Text>
+            <View style={styles.authOptions}>
+              {hasFaceId && (
+                <TouchableOpacity 
+                  style={authMode === 'BIOMETRIC' ? styles.authOptionSelected : styles.authOption} 
+                  activeOpacity={0.7}
+                  onPress={handleBiometricAuth}
+                >
+                  <Text style={styles.authOptionText}>🔐 Face ID</Text>
+                </TouchableOpacity>
               )}
-            </TouchableOpacity>
+              {hasFingerprint && !hasFaceId && (
+                <TouchableOpacity 
+                  style={authMode === 'BIOMETRIC' ? styles.authOptionSelected : styles.authOption} 
+                  activeOpacity={0.7}
+                  onPress={handleBiometricAuth}
+                >
+                  <Text style={styles.authOptionText}>👁️ Fingerprint</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity 
+                style={authMode === 'PIN' ? styles.authOptionSelected : styles.authOption} 
+                activeOpacity={0.7}
+                onPress={() => setAuthMode('PIN')}
+              >
+                <Text style={styles.authOptionText}>🔢 Passcode</Text>
+              </TouchableOpacity>
+            </View>
+
+            {authMode === 'PIN' ? (
+              <View style={styles.pinContainer}>
+                <Text style={styles.pinLabel}>Enter 4-digit App Passcode</Text>
+                <View style={styles.pinInputContainer}>
+                  {[0, 1, 2, 3].map((i) => (
+                    <View key={i} style={styles.pinBox}>
+                      <Text style={styles.pinChar}>{pin[i] ? '●' : ''}</Text>
+                    </View>
+                  ))}
+                </View>
+                <TextInput
+                  style={styles.hiddenInput}
+                  value={pin}
+                  onChangeText={handlePinChange}
+                  maxLength={4}
+                  keyboardType="numeric"
+                  autoFocus={true}
+                  placeholder=" "
+                  secureTextEntry={true}
+                />
+              </View>
+            ) : (
+              <View style={styles.biometricPromptContainer}>
+                <Text style={styles.biometricPromptText}>Tap above to authenticate</Text>
+              </View>
+            )}
+
+            {error && <Text style={styles.errorText}>{error}</Text>}
+
+            <View style={styles.buttonContainer}>
+              <TouchableOpacity
+                style={[styles.button, styles.cancelButton]}
+                onPress={onCancel}
+                disabled={loading}
+              >
+                <Text style={styles.buttonText}>Cancel</Text>
+              </TouchableOpacity>
+              {authMode === 'PIN' && (
+                <TouchableOpacity
+                  style={[styles.button, styles.submitButton, pin.length !== 4 && styles.buttonDisabled]}
+                  onPress={handleSubmit}
+                  disabled={loading || pin.length !== 4}
+                >
+                  {loading ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={styles.buttonText}>Authorize</Text>
+                  )}
+                </TouchableOpacity>
+              )}
+            </View>
           </View>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 };
@@ -182,6 +251,16 @@ const styles = StyleSheet.create({
   },
   pinContainer: {
     marginBottom: Spacing.lg,
+  },
+  biometricPromptContainer: {
+    marginBottom: Spacing.lg,
+    height: 80,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  biometricPromptText: {
+    fontSize: 14,
+    color: Colors.textSecondary,
   },
   pinLabel: {
     fontSize: 14,

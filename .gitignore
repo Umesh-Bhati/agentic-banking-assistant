@@ -5,4 +5,5 @@ dist/
 .DS_Store
 .env
 .env.local
-/apps/backend/.envmastra.db*
+/apps/backend/.env
+mastra.db*

@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Mastra } from '@mastra/core';
+import { Agent } from '@mastra/core/agent';
 import { LibSQLStore } from '@mastra/libsql';
 import { createProductKnowledgeAgent } from '../agents/product-knowledge-agent.js';
 import { createIntentRouterAgent } from '../agents/intent-router-agent.js';
@@ -200,42 +201,7 @@ export async function createChatRoute(
       return reply.code(400).send({ error: 'Missing message or sessionId' });
     }
 
-    try {
-      const { data: existingMessages } = await supabase
-        .from('chat_messages')
-        .select('role, content')
-        .eq('session_id', sessionId)
-        .order('created_at', { ascending: true });
-
-      const isFirstMessage = !existingMessages || existingMessages.length === 0;
-      if (existingMessages && existingMessages.length > 0) {
-        history = existingMessages as any;
-      }
-
-      await supabase
-        .from('chat_messages')
-        .insert({
-          session_id: sessionId,
-          role: 'user',
-          content: message,
-        });
-
-      if (isFirstMessage) {
-        const title = message.length > 50 ? message.slice(0, 47) + '...' : message;
-        await supabase
-          .from('chat_sessions')
-          .upsert({
-            id: sessionId,
-            user_id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
-            title,
-            updated_at: new Date().toISOString(),
-          }, { onConflict: 'id' });
-      }
-    } catch (err) {
-      console.error('Failed to fetch/save messages:', err);
-    }
-
-    // Set SSE headers
+    // Set SSE headers immediately to establish connection and unblock client
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
@@ -273,6 +239,14 @@ export async function createChatRoute(
       sendEvent(JSON.stringify({ type: 'token', content: token }));
     };
 
+    const sendToolCall = (toolName: string, toolCallId: string, args: any) => {
+      sendEvent(JSON.stringify({ type: 'tool_call', toolName, toolCallId, args }));
+    };
+
+    const sendToolResult = (toolName: string, toolCallId: string, result: any) => {
+      sendEvent(JSON.stringify({ type: 'tool_result', toolName, toolCallId, result }));
+    };
+
     const sendDone = (workflowState?: ActiveWorkflowState | null) => {
       saveAssistantMessage();
       sendEvent(JSON.stringify({ type: 'done', workflowState }));
@@ -289,18 +263,53 @@ export async function createChatRoute(
       sendEvent(JSON.stringify({ 
         type: 'auth_required', 
         workflowState, 
-        suspendData: stepSuspendData,
-        cardType: stepSuspendData?.cardType,
-        last4: stepSuspendData?.last4,
+        suspendData: stepSuspendData 
       }));
     };
 
     const sendStatementCard = (data: any) => {
-      sendEvent(JSON.stringify({ 
-        type: 'STATEMENT_CARD', 
-        data 
-      }));
+      sendEvent(JSON.stringify({ type: 'STATEMENT_CARD', data }));
     };
+
+    // Emit a tool call for the initial intent classification phase
+    // so the UI can show a native "Thinking..." or "Analyzing..." state
+    const routingToolId = Date.now().toString();
+    sendToolCall('RoutingIntent', routingToolId, {});
+    
+    try {
+      const { data: existingMessages } = await supabase
+        .from('chat_messages')
+        .select('role, content')
+        .eq('session_id', sessionId)
+        .order('created_at', { ascending: true });
+
+      const isFirstMessage = !existingMessages || existingMessages.length === 0;
+      if (existingMessages && existingMessages.length > 0) {
+        history = existingMessages as any;
+      }
+
+      await supabase
+        .from('chat_messages')
+        .insert({
+          session_id: sessionId,
+          role: 'user',
+          content: message,
+        });
+
+      if (isFirstMessage) {
+        const title = message.length > 50 ? message.slice(0, 47) + '...' : message;
+        await supabase
+          .from('chat_sessions')
+          .upsert({
+            id: sessionId,
+            user_id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+            title,
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'id' });
+      }
+    } catch (err) {
+      console.error('Failed to fetch/save messages:', err);
+    }
 
     try {
       // Check for existing active workflow FIRST
@@ -308,10 +317,14 @@ export async function createChatRoute(
       // before running general intent classification
       const existingWorkflowState = await getChatSession(supabase, sessionId);
       
+      let reprocess = false;
+
       // If there's an active workflow, let handleActiveWorkflow process the message
       // It knows the context (fee acceptance, card selection, auth, etc.)
       if (existingWorkflowState) {
-        const result = await handleActiveWorkflow({ cardBlockWorkflow, statementWorkflow }, existingWorkflowState, message, sessionId, config, {
+        sendToolResult('RoutingIntent', routingToolId, { intent: 'CONTINUE_WORKFLOW' });
+        
+        const activeResult = await handleActiveWorkflow({ cardBlockWorkflow, statementWorkflow }, existingWorkflowState, message, sessionId, config, {
           sendToken,
           sendDone,
           sendWorkflowSuspended,
@@ -321,15 +334,31 @@ export async function createChatRoute(
         });
         
         // If handleActiveWorkflow indicates we should reprocess (e.g., stale workflow cleared)
-        if (result?.reprocess) {
-          // Fall through to intent classification for new conversation
+        if (activeResult?.reprocess) {
+          reprocess = true;
         } else {
           return;
         }
       }
 
       // No active workflow - classify intent for new conversation
-      const intentResult = await classifyIntent(intentRouter, message);
+      let intentResult;
+      
+      if (!existingWorkflowState || reprocess) {
+         if (reprocess) {
+           const newToolId = Date.now().toString();
+           sendToolCall('RoutingIntent', newToolId, {});
+           intentResult = await classifyIntent(intentRouter, message);
+           sendToolResult('RoutingIntent', newToolId, { intent: intentResult.intent });
+         } else {
+           intentResult = await classifyIntent(intentRouter, message);
+           sendToolResult('RoutingIntent', routingToolId, { intent: intentResult.intent });
+         }
+      }
+
+      if (!intentResult) {
+        return; // Should never happen based on logic above
+      }
       
       // Route based on intent for NEW conversations only
       if (intentResult.intent === 'BLOCK_CARD') {
@@ -354,7 +383,7 @@ export async function createChatRoute(
       }
 
       if (intentResult.intent === 'ACCOUNT_INQUIRY') {
-        await handleAccountInquiry(sessionId, {
+        await handleAccountInquiry(sessionId, message, history, {
           sendToken,
           sendDone,
           sendError,
@@ -365,6 +394,8 @@ export async function createChatRoute(
       if (intentResult.intent === 'PRODUCT_QUESTION') {
         await handleProductQuestion(productAgent, message, history, {
           sendToken,
+          sendToolCall,
+          sendToolResult,
           sendDone,
           sendError,
         });
@@ -403,7 +434,7 @@ export async function createChatRoute(
     } catch {
       // Fallback: simple keyword matching
       const lower = message.toLowerCase();
-      if (lower.includes('block') && (lower.includes('card') || lower.includes('stop'))) {
+      if (lower.includes('block') && !lower.includes('unblock') && (lower.includes('card') || lower.includes('stop'))) {
         return { intent: 'BLOCK_CARD', confidence: 0.8, reasoning: 'Keyword match for card blocking' };
       }
       if (lower.includes('balance') || lower.includes('my account') || lower.includes('my balance') || lower.includes('my transactions') || lower.includes('my cards') || (lower.includes('show') && lower.includes('card'))) {
@@ -423,7 +454,13 @@ export async function createChatRoute(
     agent: ReturnType<typeof createProductKnowledgeAgent>,
     message: string,
     history: Array<{ role: 'user' | 'assistant'; content: string }>,
-    callbacks: { sendToken: (t: string) => void; sendDone: (ws?: ActiveWorkflowState | null) => void; sendError: (e: string) => void }
+    callbacks: { 
+      sendToken: (t: string) => void; 
+      sendToolCall: (name: string, id: string, args: any) => void; 
+      sendToolResult: (name: string, id: string, res: any) => void; 
+      sendDone: (ws?: ActiveWorkflowState | null) => void; 
+      sendError: (e: string) => void 
+    }
   ) {
     const messages: CoreMessage[] = [
       ...history.map(msg => ({ role: msg.role, content: msg.content })),
@@ -431,14 +468,22 @@ export async function createChatRoute(
     ];
 
     const stream = await agent.stream(messages, { maxSteps: 5 });
-    for await (const chunk of stream.textStream) {
-      if (chunk) callbacks.sendToken(chunk);
+    for await (const chunk of stream.fullStream) {
+      if (chunk.type === 'text-delta') {
+        callbacks.sendToken(chunk.payload.text);
+      } else if (chunk.type === 'tool-call') {
+        callbacks.sendToolCall(chunk.payload.toolName, chunk.payload.toolCallId, chunk.payload.args);
+      } else if (chunk.type === 'tool-result') {
+        callbacks.sendToolResult(chunk.payload.toolName, chunk.payload.toolCallId, chunk.payload.result);
+      }
     }
     callbacks.sendDone();
   }
 
   async function handleAccountInquiry(
     sessionId: string,
+    message: string,
+    history: Array<{ role: 'user' | 'assistant'; content: string }>,
     callbacks: { sendToken: (t: string) => void; sendDone: () => void; sendError: (e: string) => void }
   ) {
     try {
@@ -468,13 +513,6 @@ export async function createChatRoute(
         return;
       }
 
-      let summary = `Hello ${profile?.full_name || 'Valued Customer'}, here are your account details:\n\n`;
-      accounts.forEach((acc, i) => {
-        summary += `${i + 1}. **${acc.type} Account** (${acc.account_number})\n`;
-        summary += `   - **Balance:** ${Number(acc.balance).toLocaleString('en-US', { minimumFractionDigits: 2 })} ${acc.currency}\n`;
-        summary += `   - **Status:** ${acc.status}\n\n`;
-      });
-
       // Fetch recent 3 transactions from first account
       const { data: recentTxs } = await supabase
         .from('transactions')
@@ -483,31 +521,37 @@ export async function createChatRoute(
         .order('created_at', { ascending: false })
         .limit(3);
 
-      if (recentTxs && recentTxs.length > 0) {
-        summary += `**Recent Transactions:**\n`;
-        recentTxs.forEach(tx => {
-          const numAmount = Number(tx.amount);
-          const formattedAmount = numAmount < 0 ? `${numAmount.toFixed(2)}` : `+${numAmount.toFixed(2)}`;
-          summary += `- ${tx.description}: **${formattedAmount} ${tx.currency}**\n`;
-        });
-        summary += '\n';
-      }
-
       // Fetch cards
       const { data: userCards } = await supabase
         .from('cards')
         .select('id, card_type, network, last_4, status')
         .eq('customer_id', customerId);
 
-      if (userCards && userCards.length > 0) {
-        summary += `**Your Cards:**\n`;
-        userCards.forEach((c) => {
-          summary += `- ${c.network} ${c.card_type} ending in **${c.last_4}** (${c.status})\n`;
-        });
-        summary += '\n';
-      }
+      const accountData = {
+        customerName: profile?.full_name,
+        accounts,
+        recentTransactions: recentTxs,
+        cards: userCards,
+      };
 
-      await streamText(summary, callbacks.sendToken);
+      const accountAgent = new Agent({
+        id: 'account-agent',
+        name: 'Account Agent',
+        instructions: `You are the Al Masraf Account Assistant. Use the provided JSON account data to answer the user's question about their accounts, balances, transactions, or cards accurately and concisely. Only mention what is relevant to the user's query.`,
+        model: process.env.OPENROUTER_MODEL || 'openrouter/openai/gpt-4o-mini',
+      });
+
+      const messages: CoreMessage[] = [
+        ...history.map(msg => ({ role: msg.role, content: msg.content })),
+        { role: 'user', content: `Here is my account data in JSON format:\n${JSON.stringify(accountData, null, 2)}\n\nNow, answer my question: ${message}` },
+      ];
+
+      const stream = await accountAgent.stream(messages, { maxSteps: 1 });
+      for await (const chunk of stream.fullStream) {
+        if (chunk.type === 'text-delta') {
+          callbacks.sendToken(chunk.payload.text);
+        }
+      }
       callbacks.sendDone();
     } catch (error) {
       console.error('Account inquiry error:', error);
@@ -697,7 +741,7 @@ export async function createChatRoute(
     try {
       // Check for explicit cancel keywords FIRST
       const lower = message.toLowerCase().trim();
-      const cancelKeywords = ['cancel', 'go back', 'never mind', 'stop', 'abort', 'no', 'nope', 'decline'];
+      const cancelKeywords = ['cancel', 'go back', 'never mind', 'stop', 'abort', 'no', 'nope', 'decline', 'unblock', 'mistake', 'dont', "don't"];
       if (cancelKeywords.some(kw => lower === kw || lower.startsWith(kw + ' ') || lower.endsWith(' ' + kw))) {
         await clearChatSessionWorkflowState(supabase, sessionId);
         await streamText('Workflow cancelled. How can I help you?', callbacks.sendToken);

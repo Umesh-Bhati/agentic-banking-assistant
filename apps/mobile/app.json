@@ -11,11 +11,15 @@
       "bundleIdentifier": "ae.almasraf.boit"
     },
     "android": {
-      "package": "ae.almasraf.boit"
+      "package": "ae.almasraf.boit",
+      "softwareKeyboardLayoutMode": "resize"
     },
     "web": {
       "bundler": "metro"
     },
-    "plugins": []
+    "plugins": [
+      "expo-router",
+      "expo-image"
+    ]
   }
 }

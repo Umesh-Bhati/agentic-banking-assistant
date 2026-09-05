@@ -117,7 +117,7 @@ const askForAuthStep = createStep({
     }
 
     // Simple PIN validation (in production, this would be proper verification)
-    if (authToken.length < 4) {
+    if (authToken !== 'BIOMETRIC_SUCCESS' && authToken.length !== 4) {
       throw new Error('Invalid PIN. Please enter a valid 4-digit PIN.');
     }
 

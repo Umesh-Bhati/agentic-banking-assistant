@@ -1,7 +1,7 @@
 import fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
 import { config } from 'dotenv';
-import { createChatRoute } from './routes/chat.js';
+import { createChatRoute, createAuthRoute } from './routes/chat.js';
 import { createStatementRoute } from './routes/statements.js';
 
 config();
@@ -38,6 +38,10 @@ export async function createServer(): Promise<FastifyInstance> {
 
   if (requiredEnv.every(key => process.env[key])) {
     await createStatementRoute(server, {
+      supabaseUrl: process.env.SUPABASE_URL!,
+      supabaseServiceKey: process.env.SUPABASE_SERVICE_KEY!
+    });
+    await createAuthRoute(server, {
       supabaseUrl: process.env.SUPABASE_URL!,
       supabaseServiceKey: process.env.SUPABASE_SERVICE_KEY!
     });

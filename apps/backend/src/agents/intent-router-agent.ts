@@ -28,16 +28,17 @@ Analyze the user's message and classify it into ONE of these categories:
 1. **PRODUCT_QUESTION** - User asks about general banking products (accounts, cards, loans, interest rates, features, etc.)
    - Examples: "What credit cards do you offer?", "What's the interest rate on savings?", "Tell me about personal loans", "How do I open an account?"
 
-2. **ACCOUNT_INQUIRY** - User asks about their personal account balance, account number, or transactions
-   - Examples: "What is my balance?", "Show my account details", "What is my account number?", "My balance", "Show my transactions"
+2. **ACCOUNT_INQUIRY** - User asks about their personal account balance, account number, transactions, or asks to list/show their cards (including blocked cards)
+   - Examples: "What is my balance?", "Show my account details", "What is my account number?", "My balance", "Show my transactions", "Show my blocked cards", "Give me all my cards which are blocked"
 
-2. **BLOCK_CARD** - User wants to block/stop/cancel a card
+3. **BLOCK_CARD** - User wants to block/stop/cancel a card
    - Examples: "Block my card", "Stop my card", "Cancel my card", "Lost my card", "Stolen card"
+   - NOTE: If the user explicitly asks to "unblock" a card, this is a PRODUCT_QUESTION. If the user asks to LIST or SHOW blocked cards, it is an ACCOUNT_INQUIRY. It is only BLOCK_CARD if they want to initiate blocking a card.
 
-3. **STATEMENT_REQUEST** - User wants a bank statement
+4. **STATEMENT_REQUEST** - User wants a bank statement
    - Examples: "Get my statement", "Account statement", "Transaction history", "Download statement"
 
-4. **CANCEL_WORKFLOW** - User wants to cancel/go back from current workflow
+5. **CANCEL_WORKFLOW** - User wants to cancel/go back from current workflow
    - Examples: "Cancel", "Go back", "Never mind", "Stop", "Abort"
 
 5. **CARD_SELECTION** - User is responding to a card selection prompt (providing a card number/last 4 digits)

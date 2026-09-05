@@ -13,6 +13,9 @@ export const Colors = {
   surfaceAlt: '#F5F5F5',
   border: '#E0E0E0',
   borderDark: '#DDDDDD',
+  composer: '#FFFFFF',
+  destructiveSurface: '#FFEBEE',
+  destructive: '#D32F2F',
 
   // Text
   textPrimary: '#333333',
@@ -45,6 +48,7 @@ export const Spacing = {
   xl: 20,
   xxl: 24,
   xxxl: 32,
+  threadMaxWidth: 800,
 };
 
 export const Typography = {
@@ -92,6 +96,10 @@ export const BorderRadius = {
   xl: 20,
   pill: 24,
   full: 9999,
+  composer: 24,
+  attachment: 12,
+  bubble: 16,
+  card: 16,
 };
 
 export const Shadows = {
@@ -120,3 +128,4 @@ export const Theme = {
 };
 
 export default Theme;
+export const Radius = BorderRadius;
