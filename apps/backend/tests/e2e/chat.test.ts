@@ -6,28 +6,30 @@ import type { ActiveWorkflowState } from '@boit/types';
 // Mock Supabase
 const createMockSupabase = (sessionState: ActiveWorkflowState | null = null) => ({
   from: vi.fn((table) => {
+    if (table === 'chat_messages') return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), order: vi.fn().mockResolvedValue({ data: [], error: null }), insert: vi.fn().mockReturnValue(Promise.resolve({ error: null })), delete: vi.fn().mockReturnThis() };
     if (table === 'chat_sessions') {
       return {
         select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
         single: vi.fn().mockResolvedValue({
           data: { active_workflow_state: sessionState },
           error: null,
         }),
         update: vi.fn().mockReturnThis().mockResolvedValue({ error: null }),
+        upsert: vi.fn().mockReturnThis().mockResolvedValue({ error: null }),
       };
     }
     if (table === 'bank_documents') {
       return {
         select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
         single: vi.fn().mockResolvedValue({ data: null, error: null }),
       };
     }
     if (table === 'cards') {
       return {
         select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
         single: vi.fn().mockResolvedValue({
           data: [
             { id: 'card-1', last_4: '1234', status: 'ACTIVE', network: 'MASTERCARD', card_type: 'Platinum' },
@@ -40,7 +42,7 @@ const createMockSupabase = (sessionState: ActiveWorkflowState | null = null) => 
     }
     return {
       select: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
       single: vi.fn().mockResolvedValue({ data: null, error: null }),
       update: vi.fn().mockReturnThis().mockResolvedValue({ error: null }),
     };

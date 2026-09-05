@@ -8,15 +8,25 @@ let mockSessionState: ActiveWorkflowState | null = null;
 // Mock Supabase
 const createMockSupabase = () => ({
   from: vi.fn((table) => {
+    if (table === 'chat_messages') return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), order: vi.fn().mockResolvedValue({ data: [], error: null }), insert: vi.fn().mockReturnValue(Promise.resolve({ error: null })), delete: vi.fn().mockReturnThis() };
     if (table === 'chat_sessions') {
       return {
         select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
         single: vi.fn().mockImplementation(() => Promise.resolve({
           data: { active_workflow_state: mockSessionState },
           error: null,
         })),
         update: vi.fn().mockImplementation((val) => {
+          if (val && 'active_workflow_state' in val) {
+            mockSessionState = val.active_workflow_state;
+          }
+          return {
+            eq: vi.fn().mockResolvedValue({ error: null }),
+            then: (resolve: any) => resolve({ error: null }),
+          };
+        }),
+        upsert: vi.fn().mockImplementation((val) => {
           if (val && 'active_workflow_state' in val) {
             mockSessionState = val.active_workflow_state;
           }
@@ -34,7 +44,7 @@ const createMockSupabase = () => ({
       ];
       const builder: any = {
         select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
         single: vi.fn().mockResolvedValue({ data: cardsData[0], error: null }),
         then: (resolve: any) => resolve({ data: cardsData, error: null }),
       };
@@ -43,7 +53,7 @@ const createMockSupabase = () => ({
     if (table === 'customer_profiles') {
       return {
         select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
         single: vi.fn().mockResolvedValue({
           data: { id: 'cust-123', user_id: 'user-123' },
           error: null,
@@ -52,7 +62,7 @@ const createMockSupabase = () => ({
     }
     return {
       select: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
       single: vi.fn().mockResolvedValue({ data: null, error: null }),
       update: vi.fn().mockImplementation((val) => {
         if (val && 'active_workflow_state' in val) {

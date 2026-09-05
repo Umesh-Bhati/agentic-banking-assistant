@@ -36,7 +36,7 @@ export async function createServer(): Promise<FastifyInstance> {
   }
 
   if (requiredEnv.every(key => process.env[key])) {
-    createChatRoute(server, {
+    await createChatRoute(server, {
       supabaseUrl: process.env.SUPABASE_URL!,
       supabaseServiceKey: process.env.SUPABASE_SERVICE_KEY!,
       openaiApiKey: process.env.OPENAI_API_KEY!,

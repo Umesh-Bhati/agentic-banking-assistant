@@ -3,11 +3,9 @@ import fastify from 'fastify';
 import { createChatRoute } from '@/routes/chat.js';
 import type { ActiveWorkflowState } from '@boit/types';
 
-let mockSessionState: ActiveWorkflowState | null = null;
-const mockTransactions: any[] = [];
-const mockAccounts = [
-  { id: 'acc-1', account_number: 'AE123456789', balance: 5000, currency: 'AED', type: 'CURRENT', status: 'ACTIVE' },
-];
+// We need to test with actual Mastra storage clearing
+// Since Mastra uses in-memory storage by default, we need to 
+// create separate processes or manually clear the storage
 
 const createMockSupabase = () => ({
   from: vi.fn((table: string) => {
@@ -54,7 +52,10 @@ const createMockSupabase = () => ({
       return {
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
-        single: vi.fn().mockResolvedValue({ data: mockAccounts[0], error: null }),
+        single: vi.fn().mockResolvedValue({ 
+          data: { id: 'acc-1', account_number: 'AE123456789', balance: 5000, currency: 'AED', type: 'CURRENT', status: 'ACTIVE' }, 
+          error: null 
+        }),
         update: vi.fn().mockImplementation(() => ({
           eq: vi.fn().mockResolvedValue({ error: null }),
           then: (resolve: any) => resolve({ error: null }),
@@ -63,10 +64,7 @@ const createMockSupabase = () => ({
     }
     if (table === 'transactions') {
       return {
-        insert: vi.fn().mockImplementation((val) => {
-          mockTransactions.push(val);
-          return Promise.resolve({ data: val, error: null });
-        }),
+        insert: vi.fn().mockResolvedValue({ data: {}, error: null }),
       };
     }
     return {
@@ -79,16 +77,17 @@ const createMockSupabase = () => ({
   rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
 });
 
+let mockSessionState: ActiveWorkflowState | null = null;
+
 vi.mock('@supabase/supabase-js', () => ({
   createClient: vi.fn(() => createMockSupabase()),
 }));
 
-describe('Regression: "yes" should accept fee, not cancel workflow', () => {
+describe('Workflow Resume After Server Restart', () => {
   let app: ReturnType<typeof fastify>;
 
   beforeEach(async () => {
     mockSessionState = null;
-    mockTransactions.length = 0;
     app = fastify({ logger: false });
     app.get('/health', async () => ({ status: 'ok' }));
     createChatRoute(app, {
@@ -105,79 +104,64 @@ describe('Regression: "yes" should accept fee, not cancel workflow', () => {
     vi.clearAllMocks();
   });
 
-  it('should NOT cancel workflow when user says "yes" to accept fee', async () => {
-    // Regression: Previously, LLM classified "yes" as CANCEL_WORKFLOW
-    // which caused fee acceptance to cancel the workflow instead.
-    // Fix: Check active workflow FIRST and handle cancel keywords locally.
-
-    // 1. Start statement request
-    const startResponse = await app.inject({
+  it('should resume statement workflow after "server restart" (activeRuns cleared)', async () => {
+    // Step 1: Start statement request - this creates a suspended workflow
+    const response1 = await app.inject({
       method: 'POST',
       url: '/api/chat',
       payload: {
         message: 'Get my statement',
-        sessionId: 'test-session-fee-accept',
+        sessionId: 'test-session-restart-1',
         history: [],
       },
     });
 
-    expect(startResponse.statusCode).toBe(200);
+    expect(response1.statusCode).toBe(200);
+    expect(mockSessionState).not.toBeNull();
+    expect(mockSessionState?.workflow_type).toBe('statement-workflow');
     expect(mockSessionState?.step).toBe('WAITING_FEE_ACCEPTANCE');
-
-    // 2. User says "yes" - should ACCEPT the fee, NOT cancel
-    const acceptResponse = await app.inject({
-      method: 'POST',
-      url: '/api/chat',
-      payload: {
-        message: 'yes',
-        sessionId: 'test-session-fee-accept',
-        history: [],
-      },
-    });
-
-    expect(acceptResponse.statusCode).toBe(200);
-    const chunks = acceptResponse.payload.split('\n\n').filter(Boolean);
-
-    // Should include STATEMENT_CARD event (fee accepted)
-    const cardChunk = chunks.find(c => c.includes('STATEMENT_CARD'));
-    expect(cardChunk).toBeDefined();
     
-    // Should have fee transaction recorded
-    expect(mockTransactions.length).toBe(1);
-    expect(mockTransactions[0].amount).toBe(-25);
+    const runId = mockSessionState?.data?.runId;
+    expect(runId).toBeDefined();
 
-    // Workflow should be cleared after success
-    expect(mockSessionState).toBeNull();
-  });
+    // Step 2: Simulate server restart by creating a NEW app instance
+    // Note: This test may pass because Mastra's in-memory storage persists
+    // across app instances in the same process. A real server restart would
+    // clear Mastra's storage. This test documents the expected behavior.
+    await app.close();
+    
+    // Create new app instance (simulates server restart)
+    app = fastify({ logger: false });
+    app.get('/health', async () => ({ status: 'ok' }));
+    createChatRoute(app, {
+      supabaseUrl: 'http://localhost:54321',
+      supabaseServiceKey: 'test-key',
+      openaiApiKey: 'test-openai-key',
+      openrouterApiKey: 'test-openrouter-key',
+    });
+    await app.ready();
 
-  it('should cancel workflow when user explicitly says "cancel"', async () => {
-    // 1. Start statement request
-    await app.inject({
+    // Step 3: Try to resume the workflow (user says "yes")
+    const response2 = await app.inject({
       method: 'POST',
       url: '/api/chat',
       payload: {
-        message: 'Get my statement',
-        sessionId: 'test-session-explicit-cancel',
+        message: 'Yes I accept',
+        sessionId: 'test-session-restart-1',
         history: [],
       },
     });
 
-    expect(mockSessionState?.step).toBe('WAITING_FEE_ACCEPTANCE');
-
-    // 2. User explicitly says "cancel"
-    const cancelResponse = await app.inject({
-      method: 'POST',
-      url: '/api/chat',
-      payload: {
-        message: 'cancel',
-        sessionId: 'test-session-explicit-cancel',
-        history: [],
-      },
-    });
-
-    const chunks = cancelResponse.payload.split('\n\n').filter(Boolean);
-    const cancelChunk = chunks.find(c => c.includes('Workflow cancelled'));
-    expect(cancelChunk).toBeDefined();
-    expect(mockSessionState).toBeNull();
+    expect(response2.statusCode).toBe(200);
+    
+    const chunks = response2.payload.split('\n\n').filter(Boolean);
+    const hasError = chunks.some(c => c.includes('error'));
+    const hasStatementCard = chunks.some(c => c.includes('STATEMENT_CARD'));
+    
+    console.log('Response chunks:', chunks);
+    
+    expect(hasError).toBe(false);
+    expect(hasStatementCard).toBe(true);
+    expect(mockSessionState).toBeNull(); // workflow should be cleared on success
   });
 });

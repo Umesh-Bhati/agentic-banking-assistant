@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Mastra } from '@mastra/core';
+import { LibSQLStore } from '@mastra/libsql';
 import { createProductKnowledgeAgent } from '../agents/product-knowledge-agent.js';
 import { createIntentRouterAgent } from '../agents/intent-router-agent.js';
 import { createCardBlockWorkflow, CardBlockWorkflowInput, CardBlockWorkflowOutput } from '../workflows/card-block-workflow.js';
@@ -38,7 +39,17 @@ async function getChatSession(supabase: SupabaseClient, sessionId: string): Prom
   if (error || !data?.active_workflow_state) {
     return null;
   }
-  return data.active_workflow_state as ActiveWorkflowState;
+  const workflowState = data.active_workflow_state as ActiveWorkflowState;
+  
+  // Verify the runId exists in Mastra storage
+  // If not, clear the stale workflow state
+  const runId = workflowState.data?.runId as string | undefined;
+  if (runId) {
+    // We can't easily check Mastra storage here, but we'll handle it in handleActiveWorkflow
+    return workflowState;
+  }
+  
+  return workflowState;
 }
 
 async function updateChatSessionWorkflowState(
@@ -46,13 +57,17 @@ async function updateChatSessionWorkflowState(
   sessionId: string,
   workflowState: ActiveWorkflowState | null
 ): Promise<void> {
-  await supabase
+  const { error } = await supabase
     .from('chat_sessions')
-    .update({ 
+    .upsert({ 
+      id: sessionId,
+      user_id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', // Demo user John Doe
       active_workflow_state: workflowState,
       updated_at: new Date().toISOString(),
-    })
-    .eq('id', sessionId);
+    }, { onConflict: 'id' });
+  if (error) {
+    console.error('updateChatSessionWorkflowState error:', error);
+  }
 }
 
 async function clearChatSessionWorkflowState(
@@ -61,11 +76,12 @@ async function clearChatSessionWorkflowState(
 ): Promise<void> {
   await supabase
     .from('chat_sessions')
-    .update({ 
+    .upsert({ 
+      id: sessionId,
+      user_id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', // Demo user John Doe
       active_workflow_state: null,
       updated_at: new Date().toISOString(),
-    })
-    .eq('id', sessionId);
+    }, { onConflict: 'id' });
 }
 
 async function getCustomerId(supabase: SupabaseClient, userId: string): Promise<string | null> {
@@ -87,7 +103,7 @@ async function getCustomerId(supabase: SupabaseClient, userId: string): Promise<
   return data.id;
 }
 
-export function createChatRoute(
+export async function createChatRoute(
   fastify: FastifyInstance,
   config: {
     supabaseUrl: string;
@@ -120,17 +136,103 @@ export function createChatRoute(
       cardBlockWorkflow: cardBlockWorkflowRaw,
       statementWorkflow: statementWorkflowRaw,
     },
+    storage: new LibSQLStore({
+      id: 'boit-backend',
+      url: 'file:./mastra.db',
+    }),
   });
+  const storage = mastra.getStorage();
+  if (storage) {
+    await storage.init();
+  }
   const cardBlockWorkflow = mastra.getWorkflow('cardBlockWorkflow');
   const statementWorkflow = mastra.getWorkflow('statementWorkflow');
+
+  fastify.get('/api/chat/sessions', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { data, error } = await supabase
+      .from('chat_sessions')
+      .select('id, title, created_at, updated_at')
+      .eq('user_id', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11')
+      .order('updated_at', { ascending: false });
+
+    if (error) {
+      return reply.code(500).send({ error: error.message });
+    }
+
+    return reply.send(data);
+  });
+
+  fastify.get<{ Params: { id: string } }>('/api/chat/sessions/:id/messages', async (request, reply) => {
+    const { id } = request.params;
+    const { data, error } = await supabase
+      .from('chat_messages')
+      .select('*')
+      .eq('session_id', id)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      return reply.code(500).send({ error: error.message });
+    }
+
+    return reply.send(data);
+  });
+
+  fastify.delete<{ Params: { id: string } }>('/api/chat/sessions/:id', async (request, reply) => {
+    const { id } = request.params;
+    const { error } = await supabase
+      .from('chat_sessions')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      return reply.code(500).send({ error: error.message });
+    }
+
+    return reply.send({ success: true });
+  });
 
   fastify.post<{
     Body: ChatRequest;
   }>('/api/chat', async (request: FastifyRequest<{ Body: ChatRequest }>, reply: FastifyReply) => {
-    const { message, sessionId, history = [] } = request.body;
+    let { message, sessionId, history = [] } = request.body;
 
     if (!message || !sessionId) {
       return reply.code(400).send({ error: 'Missing message or sessionId' });
+    }
+
+    try {
+      const { data: existingMessages } = await supabase
+        .from('chat_messages')
+        .select('role, content')
+        .eq('session_id', sessionId)
+        .order('created_at', { ascending: true });
+
+      const isFirstMessage = !existingMessages || existingMessages.length === 0;
+      if (existingMessages && existingMessages.length > 0) {
+        history = existingMessages as any;
+      }
+
+      await supabase
+        .from('chat_messages')
+        .insert({
+          session_id: sessionId,
+          role: 'user',
+          content: message,
+        });
+
+      if (isFirstMessage) {
+        const title = message.length > 50 ? message.slice(0, 47) + '...' : message;
+        await supabase
+          .from('chat_sessions')
+          .upsert({
+            id: sessionId,
+            user_id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+            title,
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'id' });
+      }
+    } catch (err) {
+      console.error('Failed to fetch/save messages:', err);
     }
 
     // Set SSE headers
@@ -145,23 +247,44 @@ export function createChatRoute(
       reply.raw.write(`data: ${data}\n\n`);
     };
 
+    let assistantContent = '';
+
+    const saveAssistantMessage = () => {
+      if (assistantContent) {
+        supabase
+          .from('chat_messages')
+          .insert({
+            session_id: sessionId,
+            role: 'assistant',
+            content: assistantContent,
+          }).then(({ error }) => {
+            if (error) console.error('Failed to save assistant message:', error);
+          });
+        assistantContent = '';
+      }
+    };
+
     const sendError = (error: string) => {
       sendEvent(JSON.stringify({ type: 'error', error }));
     };
 
     const sendToken = (token: string) => {
+      assistantContent += token;
       sendEvent(JSON.stringify({ type: 'token', content: token }));
     };
 
     const sendDone = (workflowState?: ActiveWorkflowState | null) => {
+      saveAssistantMessage();
       sendEvent(JSON.stringify({ type: 'done', workflowState }));
     };
 
     const sendWorkflowSuspended = (workflowState: ActiveWorkflowState, suspendData?: any) => {
+      saveAssistantMessage();
       sendEvent(JSON.stringify({ type: 'workflow_suspended', workflowState, suspendData }));
     };
 
     const sendAuthRequired = (workflowState: ActiveWorkflowState, suspendData?: any) => {
+      saveAssistantMessage();
       const stepSuspendData = suspendData?.['wait-for-auth'] || suspendData;
       sendEvent(JSON.stringify({ 
         type: 'auth_required', 
@@ -188,7 +311,7 @@ export function createChatRoute(
       // If there's an active workflow, let handleActiveWorkflow process the message
       // It knows the context (fee acceptance, card selection, auth, etc.)
       if (existingWorkflowState) {
-        await handleActiveWorkflow({ cardBlockWorkflow, statementWorkflow }, existingWorkflowState, message, sessionId, config, {
+        const result = await handleActiveWorkflow({ cardBlockWorkflow, statementWorkflow }, existingWorkflowState, message, sessionId, config, {
           sendToken,
           sendDone,
           sendWorkflowSuspended,
@@ -196,7 +319,13 @@ export function createChatRoute(
           sendAuthRequired,
           sendStatementCard,
         });
-        return;
+        
+        // If handleActiveWorkflow indicates we should reprocess (e.g., stale workflow cleared)
+        if (result?.reprocess) {
+          // Fall through to intent classification for new conversation
+        } else {
+          return;
+        }
       }
 
       // No active workflow - classify intent for new conversation
@@ -243,7 +372,7 @@ export function createChatRoute(
       }
 
       // Default fallback
-      sendToken("I'm here to help with Al Masraf banking products. You can ask about accounts, cards, loans, or request to block a card.");
+      await streamText("I'm here to help with Al Masraf banking products. You can ask about accounts, cards, loans, or request to block a card.", sendToken);
       sendDone();
 
     } catch (error) {
@@ -254,6 +383,15 @@ export function createChatRoute(
       reply.raw.end();
     }
   });
+
+  // Helper to stream text in chunks (simulates real streaming for non-LLM responses)
+  async function streamText(text: string, sendToken: (t: string) => void, chunkSize = 20, delayMs = 30) {
+    for (let i = 0; i < text.length; i += chunkSize) {
+      const chunk = text.slice(i, i + chunkSize);
+      sendToken(chunk);
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
 
   async function classifyIntent(agent: ReturnType<typeof createIntentRouterAgent>, message: string): Promise<IntentResult> {
     try {
@@ -325,7 +463,7 @@ export function createChatRoute(
         .eq('customer_id', customerId);
 
       if (!accounts || accounts.length === 0) {
-        callbacks.sendToken('No active bank accounts found for your profile.');
+        await streamText('No active bank accounts found for your profile.', callbacks.sendToken);
         callbacks.sendDone();
         return;
       }
@@ -369,7 +507,7 @@ export function createChatRoute(
         summary += '\n';
       }
 
-      callbacks.sendToken(summary);
+      await streamText(summary, callbacks.sendToken);
       callbacks.sendDone();
     } catch (error) {
       console.error('Account inquiry error:', error);
@@ -436,10 +574,10 @@ export function createChatRoute(
           });
         }
         
-        callbacks.sendToken(suspendMessage);
+        await streamText(suspendMessage, callbacks.sendToken);
         callbacks.sendWorkflowSuspended(workflowState, suspendData);
       } else if (workflowResult.status === 'success') {
-        callbacks.sendToken(workflowResult.output?.message || 'Card blocked successfully.');
+        await streamText(workflowResult.output?.message || 'Card blocked successfully.', callbacks.sendToken);
         callbacks.sendDone();
       }
     } catch (error) {
@@ -492,14 +630,14 @@ export function createChatRoute(
         const suspendData = workflowResult.suspendPayload || workflowResult.suspendData;
         const stepData = suspendData?.['ask-fee-acceptance'] || suspendData;
         const suspendMessage = stepData?.reason || 'Generating this statement will cost 25 AED. Do you accept?';
-        callbacks.sendToken(suspendMessage);
+        await streamText(suspendMessage, callbacks.sendToken);
         callbacks.sendWorkflowSuspended(workflowState, stepData);
       } else if (workflowResult.status === 'success') {
         const outputData = workflowResult.output?.data || workflowResult.result?.data;
         if (outputData) {
           callbacks.sendStatementCard?.(outputData);
         }
-        callbacks.sendToken(workflowResult.output?.message || workflowResult.result?.message || 'Statement generated successfully.');
+        await streamText(workflowResult.output?.message || workflowResult.result?.message || 'Statement generated successfully.', callbacks.sendToken);
         callbacks.sendDone();
       }
     } catch (error) {
@@ -516,14 +654,14 @@ export function createChatRoute(
     sessionId: string,
     config: { supabaseUrl: string; supabaseServiceKey: string },
     callbacks: { sendToken: (t: string) => void; sendDone: (ws?: ActiveWorkflowState | null) => void; sendWorkflowSuspended: (ws: ActiveWorkflowState, sd?: any) => void; sendError: (e: string) => void; sendAuthRequired?: (ws: ActiveWorkflowState, sd?: any) => void; sendStatementCard?: (data: any) => void }
-  ) {
+  ): Promise<{ reprocess?: boolean } | void> {
     try {
       // Check for explicit cancel keywords FIRST
       const lower = message.toLowerCase().trim();
       const cancelKeywords = ['cancel', 'go back', 'never mind', 'stop', 'abort', 'no', 'nope', 'decline'];
       if (cancelKeywords.some(kw => lower === kw || lower.startsWith(kw + ' ') || lower.endsWith(' ' + kw))) {
         await clearChatSessionWorkflowState(supabase, sessionId);
-        callbacks.sendToken('Workflow cancelled. How can I help you?');
+        await streamText('Workflow cancelled. How can I help you?', callbacks.sendToken);
         callbacks.sendDone(null);
         return;
       }
@@ -545,6 +683,10 @@ export function createChatRoute(
         let run = activeRuns.get(runId);
         if (!run) {
           run = await workflows.cardBlockWorkflow.createRun({ runId });
+          if (run.workflowRunStatus !== 'suspended') {
+            await clearChatSessionWorkflowState(supabase, sessionId);
+            throw new Error('Workflow session expired. Please start a new card block request.');
+          }
           activeRuns.set(runId, run);
         }
         
@@ -565,12 +707,12 @@ export function createChatRoute(
             if (matchedCard) {
               resumeData = { selectedCardId: matchedCard.id };
             } else {
-              callbacks.sendToken('Could not find that card. Please provide the last 4 digits of one of your active cards.');
+              await streamText('Could not find that card. Please provide the last 4 digits of one of your active cards.', callbacks.sendToken);
               callbacks.sendWorkflowSuspended(workflowState);
               return;
             }
           } else {
-            callbacks.sendToken('Please provide the last 4 digits of the card you want to block.');
+            await streamText('Please provide the last 4 digits of the card you want to block.', callbacks.sendToken);
             callbacks.sendWorkflowSuspended(workflowState);
             return;
           }
@@ -603,7 +745,7 @@ export function createChatRoute(
             // Send auth_required signal for the mobile app to show PIN modal
             const stepData = suspendData?.['wait-for-auth'] || suspendData;
             const suspendMessage = stepData?.reason || 'Please enter your PIN or use Face ID to authorize.';
-            callbacks.sendToken(suspendMessage);
+            await streamText(suspendMessage, callbacks.sendToken);
             callbacks.sendAuthRequired?.(newWorkflowState, stepData);
           } else {
             const stepData = suspendData?.['ask-card-selection'] || suspendData;
@@ -614,13 +756,13 @@ export function createChatRoute(
                 suspendMessage += `${index + 1}. **${c.card_type}** ending in **${c.last_4}** (${c.status})\n`;
               });
             }
-            callbacks.sendToken(suspendMessage);
+            await streamText(suspendMessage, callbacks.sendToken);
             callbacks.sendWorkflowSuspended(newWorkflowState, stepData);
           }
         } else if (workflowResult.status === 'success') {
           activeRuns.delete(runId);
           await clearChatSessionWorkflowState(supabase, sessionId);
-          callbacks.sendToken(workflowResult.output?.message || 'Card blocked successfully.');
+          await streamText(workflowResult.output?.message || 'Card blocked successfully.', callbacks.sendToken);
           callbacks.sendDone(null);
         } else {
           throw new Error(`Workflow ended with status: ${workflowResult.status}`);
@@ -641,14 +783,33 @@ export function createChatRoute(
         let run = activeRuns.get(runId);
         if (!run) {
           run = await workflows.statementWorkflow.createRun({ runId });
+          if (run.workflowRunStatus !== 'suspended') {
+            await clearChatSessionWorkflowState(supabase, sessionId);
+            throw new Error('Workflow session expired. Please start a new statement request.');
+          }
           activeRuns.set(runId, run);
         }
 
         let resumeData: any = {};
+        let shouldReprocess = false;
         if (workflowState.step === 'WAITING_FEE_ACCEPTANCE') {
-          const lower = message.toLowerCase();
-          const accepted = ['yes', 'accept', 'ok', 'sure', 'confirm', 'agree', 'yep', 'yeah', 'proceed'].some(kw => lower.includes(kw));
-          resumeData = { accepted };
+          const lower = message.toLowerCase().trim();
+          const accepted = ['yes', 'accept', 'ok', 'sure', 'confirm', 'agree', 'yep', 'yeah', 'proceed'].some(kw => lower === kw || lower.startsWith(kw + ' ') || lower.endsWith(' ' + kw));
+          const rejected = ['no', 'nope', 'cancel', 'stop', 'decline', 'reject', 'dont', "don't", 'not'].some(kw => lower === kw || lower.startsWith(kw + ' ') || lower.endsWith(' ' + kw));
+          
+          // If message is not a clear yes/no, clear stale workflow and let intent classifier handle it
+          if (!accepted && !rejected) {
+            await clearChatSessionWorkflowState(supabase, sessionId);
+            activeRuns.delete(runId);
+            shouldReprocess = true;
+          } else {
+            resumeData = { accepted };
+          }
+        }
+
+        if (shouldReprocess) {
+          // Re-process as new message (will be handled by the outer handler)
+          return { reprocess: true };
         }
 
         const result = await run.resume({
@@ -674,7 +835,7 @@ export function createChatRoute(
           const suspendData = workflowResult.suspendPayload || workflowResult.suspendData;
           const stepData = suspendData?.['ask-fee-acceptance'] || suspendData;
           const suspendMessage = stepData?.reason || 'Generating this statement will cost 25 AED. Do you accept?';
-          callbacks.sendToken(suspendMessage);
+          await streamText(suspendMessage, callbacks.sendToken);
           callbacks.sendWorkflowSuspended(newWorkflowState, stepData);
         } else if (workflowResult.status === 'success') {
           activeRuns.delete(runId);
@@ -683,7 +844,7 @@ export function createChatRoute(
           if (outputData) {
             callbacks.sendStatementCard?.(outputData);
           }
-          callbacks.sendToken(workflowResult.output?.message || workflowResult.result?.message || 'Your account statement has been generated successfully.');
+          await streamText(workflowResult.output?.message || workflowResult.result?.message || 'Your account statement has been generated successfully.', callbacks.sendToken);
           callbacks.sendDone(null);
         } else {
           throw new Error(`Workflow ended with status: ${workflowResult.status}`);
@@ -696,6 +857,7 @@ export function createChatRoute(
       callbacks.sendError(error instanceof Error ? error.message : 'Workflow error');
       callbacks.sendDone();
     }
+    return;
   }
 }
 
@@ -704,7 +866,7 @@ export interface AuthRequest {
   sessionId: string;
 }
 
-export function createAuthRoute(
+export async function createAuthRoute(
   fastify: FastifyInstance,
   config: {
     supabaseUrl: string;
@@ -720,7 +882,15 @@ export function createAuthRoute(
     workflows: {
       cardBlockWorkflow: cardBlockWorkflowRaw,
     },
+    storage: new LibSQLStore({
+      id: 'boit-backend',
+      url: 'file:./mastra.db',
+    }),
   });
+  const storage = mastra.getStorage();
+  if (storage) {
+    await storage.init();
+  }
   const cardBlockWorkflow = mastra.getWorkflow('cardBlockWorkflow');
 
   fastify.post<{

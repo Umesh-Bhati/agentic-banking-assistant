@@ -13,9 +13,11 @@
     "@boit/types": "workspace:*",
     "expo": "~53.0.0",
     "expo-router": "~5.0.0",
+    "expo-secure-store": "^57.0.3",
     "expo-status-bar": "~2.0.0",
     "react": "19.0.0",
     "react-native": "0.79.0",
+    "react-native-markdown-display": "^7.0.2",
     "react-native-safe-area-context": "5.4.0",
     "react-native-screens": "~4.10.0"
   },

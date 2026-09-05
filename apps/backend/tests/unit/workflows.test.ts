@@ -9,7 +9,7 @@ const mockSupabase = {
     if (table === 'cards') {
       return {
         select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
         single: vi.fn().mockResolvedValue({
           data: { id: 'card-1', last_4: '1234', card_type: 'Platinum' },
           error: null,
@@ -19,7 +19,7 @@ const mockSupabase = {
     }
     return {
       select: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
       single: vi.fn().mockResolvedValue({ data: null, error: null }),
       update: vi.fn().mockReturnThis().mockResolvedValue({ error: null }),
     };
@@ -40,7 +40,7 @@ describe('CardBlockWorkflow - Logic Seam Tests', () => {
       if (table === 'cards') {
         return {
           select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
           single: vi.fn().mockResolvedValue({
             data: { id: 'card-1', last_4: '1234', card_type: 'Platinum' },
             error: null,
@@ -50,7 +50,7 @@ describe('CardBlockWorkflow - Logic Seam Tests', () => {
       }
       return {
         select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
         single: vi.fn().mockResolvedValue({ data: null, error: null }),
         update: vi.fn().mockReturnThis().mockResolvedValue({ error: null }),
       };
@@ -90,7 +90,7 @@ describe('CardBlockWorkflow - Logic Seam Tests', () => {
       if (table === 'cards') {
         return {
           select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
           single: vi.fn().mockImplementation(() => {
             callCount++;
             if (callCount === 1) {
@@ -103,7 +103,7 @@ describe('CardBlockWorkflow - Logic Seam Tests', () => {
       }
       return {
         select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
         single: vi.fn().mockResolvedValue({ data: null, error: null }),
         update: vi.fn().mockReturnThis().mockResolvedValue({ error: null }),
       };

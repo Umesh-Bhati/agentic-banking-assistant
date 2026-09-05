@@ -6,21 +6,23 @@ import type { ActiveWorkflowState } from '@boit/types';
 // Mock Supabase at module level
 const createMockSupabase = () => ({
   from: vi.fn((table: string) => {
+    if (table === 'chat_messages') return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), order: vi.fn().mockResolvedValue({ data: [], error: null }), insert: vi.fn().mockReturnValue(Promise.resolve({ error: null })), delete: vi.fn().mockReturnThis() };
     if (table === 'chat_sessions') {
       return {
         select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
         single: vi.fn().mockResolvedValue({
           data: { active_workflow_state: null },
           error: null,
         }),
         update: vi.fn().mockReturnThis().mockResolvedValue({ error: null }),
+        upsert: vi.fn().mockReturnThis().mockResolvedValue({ error: null }),
       };
     }
     if (table === 'cards') {
       return {
         select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
         single: vi.fn().mockResolvedValue({
           data: { id: 'card-1', last_4: '1234', card_type: 'Platinum' },
           error: null,
@@ -31,7 +33,7 @@ const createMockSupabase = () => ({
     if (table === 'customer_profiles') {
       return {
         select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
         single: vi.fn().mockResolvedValue({
           data: { id: 'cust-123', user_id: 'user-123' },
           error: null,
@@ -40,7 +42,7 @@ const createMockSupabase = () => ({
     }
     return {
       select: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
       single: vi.fn().mockResolvedValue({ data: null, error: null }),
       update: vi.fn().mockReturnThis().mockResolvedValue({ error: null }),
     };
@@ -101,7 +103,7 @@ describe('Fastify Network Boundary - /api/auth Endpoint (TDD)', () => {
       if (table === 'chat_sessions') {
         return {
           select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
           single: vi.fn().mockResolvedValue({
             data: { active_workflow_state: null },
             error: null,
@@ -111,7 +113,7 @@ describe('Fastify Network Boundary - /api/auth Endpoint (TDD)', () => {
       }
       return {
         select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
         single: vi.fn().mockResolvedValue({ data: null, error: null }),
         update: vi.fn().mockReturnThis().mockResolvedValue({ error: null }),
       };
@@ -132,7 +134,7 @@ describe('Fastify Network Boundary - /api/auth Endpoint (TDD)', () => {
       if (table === 'chat_sessions') {
         return {
           select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
           single: vi.fn().mockResolvedValue({
             data: {
               active_workflow_state: {
@@ -150,7 +152,7 @@ describe('Fastify Network Boundary - /api/auth Endpoint (TDD)', () => {
       }
       return {
         select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
         single: vi.fn().mockResolvedValue({ data: null, error: null }),
         update: vi.fn().mockReturnThis().mockResolvedValue({ error: null }),
       };
@@ -173,7 +175,7 @@ describe('Fastify Network Boundary - /api/auth Endpoint (TDD)', () => {
       if (table === 'chat_sessions') {
         return {
           select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
           single: vi.fn().mockResolvedValue({
             data: {
               active_workflow_state: {
@@ -192,7 +194,7 @@ describe('Fastify Network Boundary - /api/auth Endpoint (TDD)', () => {
       if (table === 'cards') {
         return {
           select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
           single: vi.fn().mockResolvedValue({
             data: { id: 'card-1', last_4: '1234', card_type: 'Platinum' },
             error: null,
@@ -202,7 +204,7 @@ describe('Fastify Network Boundary - /api/auth Endpoint (TDD)', () => {
       }
       return {
         select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
         single: vi.fn().mockResolvedValue({ data: null, error: null }),
         update: vi.fn().mockReturnThis().mockResolvedValue({ error: null }),
       };
@@ -228,7 +230,7 @@ describe('Fastify Network Boundary - /api/auth Endpoint (TDD)', () => {
       if (table === 'chat_sessions') {
         return {
           select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
           single: vi.fn().mockResolvedValue({
             data: {
               active_workflow_state: {
@@ -246,7 +248,7 @@ describe('Fastify Network Boundary - /api/auth Endpoint (TDD)', () => {
       }
       return {
         select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
         single: vi.fn().mockResolvedValue({ data: null, error: null }),
         update: vi.fn().mockReturnThis().mockResolvedValue({ error: null }),
       };

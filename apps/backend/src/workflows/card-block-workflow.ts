@@ -183,7 +183,9 @@ export const createCardBlockWorkflow = (config: CardBlockWorkflowConfig) => {
       success: z.boolean(),
       message: z.string(),
     }),
-    // No stateSchema - let workflow use input as initial state
+    options: {
+      shouldPersistSnapshot: ({ workflowStatus }) => workflowStatus === 'suspended',
+    },
   })
     .then(fetchUserCardsStep)
     .then(askCardSelectionStep)

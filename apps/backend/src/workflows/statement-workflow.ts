@@ -94,11 +94,17 @@ const deductFeeAndGenerateStep = createStep({
     const supabase = createClient(inputData.supabaseUrl!, inputData.supabaseKey!);
 
     // Fetch user account
-    const { data: account, error: accountError } = await supabase
+    let query = supabase
       .from('bank_accounts')
       .select('id, account_number, balance, currency')
-      .eq('customer_id', inputData.userId!)
-      .single();
+      .eq('customer_id', inputData.userId!);
+      
+    if (inputData.accountId) {
+      query = query.eq('id', inputData.accountId);
+    }
+    
+    // Use limit(1).single() because a user can have multiple accounts (e.g. CURRENT and SAVINGS)
+    const { data: account, error: accountError } = await query.limit(1).single();
 
     if (accountError || !account) {
       throw new Error('Bank account not found');

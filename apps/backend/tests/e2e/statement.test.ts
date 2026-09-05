@@ -11,10 +11,11 @@ const mockAccounts = [
 
 const createMockSupabase = () => ({
   from: vi.fn((table: string) => {
+    if (table === 'chat_messages') return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), order: vi.fn().mockResolvedValue({ data: [], error: null }), insert: vi.fn().mockReturnValue(Promise.resolve({ error: null })), delete: vi.fn().mockReturnThis() };
     if (table === 'chat_sessions') {
       return {
         select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
         single: vi.fn().mockImplementation(() => Promise.resolve({
           data: { active_workflow_state: mockSessionState },
           error: null,
@@ -28,12 +29,21 @@ const createMockSupabase = () => ({
             then: (resolve: any) => resolve({ error: null }),
           };
         }),
+        upsert: vi.fn().mockImplementation((val) => {
+          if (val && 'active_workflow_state' in val) {
+            mockSessionState = val.active_workflow_state;
+          }
+          return {
+            eq: vi.fn().mockResolvedValue({ error: null }),
+            then: (resolve: any) => resolve({ error: null }),
+          };
+        }),
       };
     }
     if (table === 'customer_profiles') {
       return {
         select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
         single: vi.fn().mockResolvedValue({
           data: { id: 'cust-123', user_id: 'user-123' },
           error: null,
@@ -43,7 +53,7 @@ const createMockSupabase = () => ({
     if (table === 'bank_accounts') {
       return {
         select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
         single: vi.fn().mockResolvedValue({ data: mockAccounts[0], error: null }),
         update: vi.fn().mockImplementation(() => ({
           eq: vi.fn().mockResolvedValue({ error: null }),
@@ -61,7 +71,7 @@ const createMockSupabase = () => ({
     }
     return {
       select: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
       single: vi.fn().mockResolvedValue({ data: null, error: null }),
       update: vi.fn().mockReturnThis().mockResolvedValue({ error: null }),
     };

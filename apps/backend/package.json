@@ -15,6 +15,7 @@
     "@ai-sdk/openai": "^4.0.58",
     "@boit/types": "workspace:*",
     "@mastra/core": "^1.64.0",
+    "@mastra/libsql": "^1.22.3",
     "@mastra/rag": "^2.6.1",
     "@supabase/supabase-js": "^2.49.0",
     "ai": "^7.0.0",

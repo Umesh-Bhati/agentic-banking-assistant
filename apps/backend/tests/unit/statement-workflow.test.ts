@@ -6,20 +6,34 @@ import type { StatementWorkflowInput } from '@/workflows/statement-workflow.js';
 const mockTransactions: any[] = [];
 const mockAccounts = [
   { id: 'acc-1', account_number: 'AE123456789', balance: 5000, currency: 'AED', type: 'CURRENT', status: 'ACTIVE' },
+  { id: 'acc-2', account_number: 'AE12345678901', balance: 15000, currency: 'AED', type: 'SAVINGS', status: 'ACTIVE' },
 ];
+
+let queryHasLimit = false;
+const mockBankAccountQuery = {
+  select: vi.fn().mockReturnThis(),
+  eq: vi.fn().mockReturnThis(),
+  limit: vi.fn().mockImplementation(() => {
+    queryHasLimit = true;
+    return mockBankAccountQuery;
+  }),
+  single: vi.fn().mockImplementation(() => {
+    if (!queryHasLimit && mockAccounts.length > 1) {
+      return Promise.resolve({ data: null, error: { code: 'PGRST116', message: 'Cannot coerce result to single JSON object' } });
+    }
+    return Promise.resolve({ data: mockAccounts[0], error: null });
+  }),
+  update: vi.fn().mockImplementation(() => ({
+    eq: vi.fn().mockResolvedValue({ error: null }),
+    then: (resolve: any) => resolve({ error: null }),
+  })),
+};
 
 const mockSupabase = {
   from: vi.fn((table: string) => {
     if (table === 'bank_accounts') {
-      return {
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        single: vi.fn().mockResolvedValue({ data: mockAccounts[0], error: null }),
-        update: vi.fn().mockImplementation(() => ({
-          eq: vi.fn().mockResolvedValue({ error: null }),
-          then: (resolve: any) => resolve({ error: null }),
-        })),
-      };
+      queryHasLimit = false;
+      return mockBankAccountQuery;
     }
     if (table === 'transactions') {
       return {
@@ -32,6 +46,7 @@ const mockSupabase = {
     return {
       select: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
       single: vi.fn().mockResolvedValue({ data: null, error: null }),
       update: vi.fn().mockReturnThis().mockResolvedValue({ error: null }),
     };

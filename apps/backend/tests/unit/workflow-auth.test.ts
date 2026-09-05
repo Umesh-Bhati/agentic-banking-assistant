@@ -8,7 +8,7 @@ const mockSupabase = {
     if (table === 'cards') {
       return {
         select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
         single: vi.fn().mockResolvedValue({
           data: { id: 'card-1', last_4: '1234', card_type: 'Platinum' },
           error: null,
@@ -18,7 +18,7 @@ const mockSupabase = {
     }
     return {
       select: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
       single: vi.fn().mockResolvedValue({ data: null, error: null }),
       update: vi.fn().mockReturnThis().mockResolvedValue({ error: null }),
     };
@@ -39,7 +39,7 @@ describe('CardBlockWorkflow - WAITING_FOR_AUTH Step (TDD)', () => {
       if (table === 'cards') {
         return {
           select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
           single: vi.fn().mockResolvedValue({
             data: { id: 'card-1', last_4: '1234', card_type: 'Platinum' },
             error: null,
@@ -49,7 +49,7 @@ describe('CardBlockWorkflow - WAITING_FOR_AUTH Step (TDD)', () => {
       }
       return {
         select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
         single: vi.fn().mockResolvedValue({ data: null, error: null }),
         update: vi.fn().mockReturnThis().mockResolvedValue({ error: null }),
       };
@@ -81,7 +81,7 @@ describe('CardBlockWorkflow - WAITING_FOR_AUTH Step (TDD)', () => {
       if (table === 'cards') {
         return {
           select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
           single: vi.fn().mockImplementation(() => {
             callCount++;
             if (callCount === 1) {
@@ -94,7 +94,7 @@ describe('CardBlockWorkflow - WAITING_FOR_AUTH Step (TDD)', () => {
       }
       return {
         select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
         single: vi.fn().mockResolvedValue({ data: null, error: null }),
         update: vi.fn().mockReturnThis().mockResolvedValue({ error: null }),
       };
