@@ -844,7 +844,7 @@ export async function createChatRoute(
             : workflowResult.suspended?.[0];
           const newWorkflowState: ActiveWorkflowState = {
             ...workflowState,
-            step: 'WAITING_FEE_ACCEPTANCE',
+            step: suspendedStepName === 'ask-date-range' ? 'WAITING_DATE_RANGE' : suspendedStepName === 'ask-account-selection' ? 'WAITING_ACCOUNT_SELECTION' : 'WAITING_FEE_ACCEPTANCE',
             data: { ...workflowState.data, runId, suspendedStep: suspendedStepName },
             updated_at: new Date().toISOString(),
           };
