@@ -2,10 +2,23 @@ import { View, Text, StyleSheet, TouchableOpacity, Linking } from 'react-native'
 import type { StatementCardData } from '@boit/shared-types';
 import { Colors, Spacing, Typography, BorderRadius, Shadows } from '../../../constants/theme';
 import { useChat } from '../../../context/ChatContext';
+import Constants from 'expo-constants';
 
 interface StatementCardProps {
   data: StatementCardData;
 }
+
+const getApiBaseUrl = () => {
+  if (process.env.EXPO_PUBLIC_API_URL) {
+    return process.env.EXPO_PUBLIC_API_URL;
+  }
+  if (__DEV__) {
+    const debuggerHost = Constants.expoConfig?.hostUri;
+    const localhost = debuggerHost?.split(':')[0] || 'localhost';
+    return `http://${localhost}:3000`;
+  }
+  return 'http://localhost:3000';
+};
 
 export function StatementCard({ data }: StatementCardProps) {
   const { authToken } = useChat();
@@ -13,6 +26,21 @@ export function StatementCard({ data }: StatementCardProps) {
   const handleOpenPdf = () => {
     if (data.url) {
       let targetUrl = data.url;
+      const apiBaseUrl = getApiBaseUrl();
+
+      if (targetUrl.includes('localhost:3000')) {
+        targetUrl = targetUrl.replace('http://localhost:3000', apiBaseUrl);
+      } else if (targetUrl.includes('127.0.0.1:3000')) {
+        targetUrl = targetUrl.replace('http://127.0.0.1:3000', apiBaseUrl);
+      } else if (targetUrl.startsWith('/')) {
+        targetUrl = `${apiBaseUrl}${targetUrl}`;
+      }
+
+      if (!targetUrl.includes('ngrok-skip-browser-warning')) {
+        const separator = targetUrl.includes('?') ? '&' : '?';
+        targetUrl = `${targetUrl}${separator}ngrok-skip-browser-warning=true`;
+      }
+
       if (authToken && !targetUrl.includes('token=')) {
         const separator = targetUrl.includes('?') ? '&' : '?';
         targetUrl = `${targetUrl}${separator}token=${encodeURIComponent(authToken)}`;

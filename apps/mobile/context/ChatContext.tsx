@@ -3,7 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import * as LocalAuthentication from 'expo-local-authentication';
 import Constants from 'expo-constants';
 import type { StatementCardData } from '@boit/shared-types';
-import { FlatList } from 'react-native';
+import { FlatList, AppState, AppStateStatus } from 'react-native';
 import { useLocalRuntime } from '@assistant-ui/react-native';
 import type { ChatModelAdapter, AssistantRuntime } from '@assistant-ui/react-native';
 
@@ -62,6 +62,7 @@ interface ChatContextType {
   
   sessionId: string;
   sessions: ChatSession[];
+  isSessionsLoading: boolean;
   messages: Message[];
   inputText: string;
   setInputText: (t: string) => void;
@@ -76,6 +77,7 @@ interface ChatContextType {
   pinError: string | undefined;
   
   handleNewChat: () => void;
+  fetchSessions: (tokenOverride?: string) => Promise<void>;
   loadSession: (id: string) => void;
   deleteSession: (id: string) => void;
   sendMessage: (overrideText?: string | any) => void;
@@ -100,6 +102,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [sessionId, setSessionId] = useState<string>(generateUUID());
   const [messages, setMessages] = useState<Message[]>([]);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [isSessionsLoading, setIsSessionsLoading] = useState(false);
   
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -111,6 +114,30 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [pinLoading, setPinLoading] = useState(false);
   const [pinError, setPinError] = useState<string | undefined>();
 
+  const appState = useRef(AppState.currentState);
+
+  const triggerBiometricUnlock = useCallback(async (token: string) => {
+    try {
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: 'Unlock Al Masraf Mobile Banking',
+        fallbackLabel: 'Enter Password',
+      });
+      if (result.success) {
+        setAuthToken(token);
+        setIsLoggedIn(true);
+        fetchSessions(token);
+        return true;
+      } else {
+        setIsLoggedIn(false);
+        return false;
+      }
+    } catch (e) {
+      console.warn('Biometric auth error:', e);
+      setIsLoggedIn(false);
+      return false;
+    }
+  }, []);
+
   useEffect(() => {
     const checkAuth = async () => {
       try {
@@ -119,19 +146,53 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         const hasHardware = await LocalAuthentication.hasHardwareAsync();
         const isEnrolled = await LocalAuthentication.isEnrolledAsync();
 
-        setCanUseBiometrics(hasHardware && isEnrolled && !!storedToken);
+        const biometricsAvailable = hasHardware && isEnrolled;
+        setCanUseBiometrics(biometricsAvailable && (!!storedToken || storedLoggedIn === 'true'));
 
         if (storedLoggedIn === 'true' && storedToken) {
-          setAuthToken(storedToken);
-          setIsLoggedIn(true);
-          fetchSessions(storedToken);
+          if (biometricsAvailable) {
+            // Prompt for biometrics on launch before unlocking!
+            triggerBiometricUnlock(storedToken);
+          } else {
+            setAuthToken(storedToken);
+            setIsLoggedIn(true);
+            fetchSessions(storedToken);
+          }
         }
       } catch (e) {
         console.warn('Failed to read auth from SecureStore:', e);
       }
     };
     checkAuth();
-  }, []);
+  }, [triggerBiometricUnlock]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', async (nextAppState: AppStateStatus) => {
+      if (
+        appState.current.match(/inactive|background/) &&
+        nextAppState === 'active'
+      ) {
+        try {
+          const storedToken = await SecureStore.getItemAsync(AUTH_TOKEN_KEY);
+          const storedLoggedIn = await SecureStore.getItemAsync(LOGGED_IN_KEY);
+          const hasHardware = await LocalAuthentication.hasHardwareAsync();
+          const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+
+          if (storedLoggedIn === 'true' && storedToken && hasHardware && isEnrolled) {
+            setIsLoggedIn(false);
+            triggerBiometricUnlock(storedToken);
+          }
+        } catch (e) {
+          console.warn('Error checking biometrics on app resume:', e);
+        }
+      }
+      appState.current = nextAppState;
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [triggerBiometricUnlock]);
 
   const chatModelAdapter: ChatModelAdapter = React.useMemo(() => ({
     async *run(options) {
@@ -142,6 +203,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', `${API_BASE_URL}/api/chat`);
       xhr.setRequestHeader('Content-Type', 'application/json');
+      xhr.setRequestHeader('ngrok-skip-browser-warning', 'true');
       if (authToken) {
         xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
       }
@@ -211,13 +273,17 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           }
         }
       }
+      fetchSessions();
     }
   }), [sessionId, authToken]);
 
   const fetchSessions = async (tokenOverride?: string) => {
+    setIsSessionsLoading(true);
     try {
       const activeToken = tokenOverride || authToken;
-      const headers: Record<string, string> = {};
+      const headers: Record<string, string> = {
+        'ngrok-skip-browser-warning': 'true',
+      };
       if (activeToken) {
         headers['Authorization'] = `Bearer ${activeToken}`;
       }
@@ -228,6 +294,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       }
     } catch (e) {
       console.warn('Failed to fetch sessions:', e);
+    } finally {
+      setIsSessionsLoading(false);
     }
   };
 
@@ -235,7 +303,9 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     setSessionId(id);
     setIsSessionLoading(true);
     try {
-      const headers: Record<string, string> = {};
+      const headers: Record<string, string> = {
+        'ngrok-skip-browser-warning': 'true',
+      };
       if (authToken) {
         headers['Authorization'] = `Bearer ${authToken}`;
       }
@@ -265,7 +335,9 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
   const deleteSession = async (id: string) => {
     try {
-      const headers: Record<string, string> = {};
+      const headers: Record<string, string> = {
+        'ngrok-skip-browser-warning': 'true',
+      };
       if (authToken) {
         headers['Authorization'] = `Bearer ${authToken}`;
       }
@@ -283,16 +355,16 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
   const handleBiometricAuth = async () => {
     try {
-      const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: 'Unlock Al Masraf Mobile Banking',
-        fallbackLabel: 'Enter Password',
-      });
-      if (result.success) {
-        const storedToken = await SecureStore.getItemAsync(AUTH_TOKEN_KEY);
-        if (storedToken) {
-          setAuthToken(storedToken);
+      const storedToken = await SecureStore.getItemAsync(AUTH_TOKEN_KEY);
+      if (storedToken) {
+        await triggerBiometricUnlock(storedToken);
+      } else {
+        const result = await LocalAuthentication.authenticateAsync({
+          promptMessage: 'Unlock Al Masraf Mobile Banking',
+          fallbackLabel: 'Enter Password',
+        });
+        if (result.success) {
           setIsLoggedIn(true);
-          fetchSessions(storedToken);
         }
       }
     } catch (e) {
@@ -309,14 +381,24 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     setLoginError(undefined);
 
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
       const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'ngrok-skip-browser-warning': 'true',
+        },
         body: JSON.stringify({
           email: email.trim(),
           password: password.trim(),
         }),
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
 
       const data = await res.json();
 
@@ -332,7 +414,11 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         setLoginError(data.error || 'Invalid email or password. Please try again.');
       }
     } catch (e: any) {
-      setLoginError('Network error. Please make sure the backend server is running.');
+      if (e.name === 'AbortError') {
+        setLoginError('Authentication request timed out. Please try again.');
+      } else {
+        setLoginError('Unable to connect to the banking server. Please check your network connection.');
+      }
     } finally {
       setLoginLoading(false);
     }
@@ -446,6 +532,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', `${API_BASE_URL}/api/chat`);
     xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.setRequestHeader('ngrok-skip-browser-warning', 'true');
     if (authToken) {
       xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
     }
@@ -495,7 +582,10 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     try {
       const isBiometric = pin === 'BIOMETRIC_SUCCESS' || pin.startsWith('bio_');
       const targetActionId = (pinModalData as any)?.actionId || 'act_demo';
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      const headers: Record<string, string> = { 
+        'Content-Type': 'application/json',
+        'ngrok-skip-browser-warning': 'true',
+      };
       if (authToken) {
         headers['Authorization'] = `Bearer ${authToken}`;
       }
@@ -556,6 +646,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         handleLogout,
         sessionId,
         sessions,
+        isSessionsLoading,
         messages,
         inputText,
         setInputText,
@@ -568,6 +659,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         pinLoading,
         pinError,
         handleNewChat,
+        fetchSessions,
         loadSession,
         deleteSession,
         sendMessage,

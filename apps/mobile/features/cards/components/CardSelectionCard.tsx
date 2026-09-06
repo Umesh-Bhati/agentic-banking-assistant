@@ -43,7 +43,10 @@ export function CardSelectionCard({ actionId, cards }: CardSelectionCardProps) {
 
     try {
       const baseUrl = getApiBaseUrl();
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      const headers: Record<string, string> = { 
+        'Content-Type': 'application/json',
+        'ngrok-skip-browser-warning': 'true',
+      };
       if (authToken) {
         headers['Authorization'] = `Bearer ${authToken}`;
       }

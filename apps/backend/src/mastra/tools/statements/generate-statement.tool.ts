@@ -56,8 +56,10 @@ export const generateStatementTool = createTool({
     }
 
     const statementId = `stmt_${Math.random().toString(36).substring(2, 9)}`;
-    const baseUrl = process.env.API_URL || 'http://localhost:3000';
-    const downloadUrl = `${baseUrl}/api/statements?accountId=${resolvedAccountId}&fromDate=${fromDate}&toDate=${toDate}`;
+    const baseUrl = process.env.API_URL || '';
+    const downloadUrl = baseUrl 
+      ? `${baseUrl}/api/statements?accountId=${resolvedAccountId}&fromDate=${fromDate}&toDate=${toDate}`
+      : `/api/statements?accountId=${resolvedAccountId}&fromDate=${fromDate}&toDate=${toDate}`;
 
     return {
       success: true,

@@ -1,7 +1,8 @@
+import React, { useEffect } from 'react';
 import { Drawer } from 'expo-router/drawer';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { ChatProvider, useChat } from '../context/ChatContext';
-import { View, Text, TouchableOpacity, FlatList, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, FlatList, StyleSheet, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, BorderRadius } from '../constants/theme';
 
@@ -9,16 +10,27 @@ function CustomDrawerContent(props: any) {
   const {
     sessions,
     sessionId,
+    isSessionsLoading,
+    fetchSessions,
     handleNewChat,
     loadSession,
     deleteSession,
     handleLogout
   } = useChat();
 
+  useEffect(() => {
+    fetchSessions();
+  }, []);
+
   return (
     <View style={styles.sidebar}>
       <View style={styles.sidebarHeader}>
-        <Text style={styles.sidebarTitle}>Chat History</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Text style={styles.sidebarTitle}>Chat History</Text>
+          {isSessionsLoading ? (
+            <ActivityIndicator size="small" color={Colors.accent} style={{ marginLeft: 8 }} />
+          ) : null}
+        </View>
         <TouchableOpacity onPress={() => props.navigation.closeDrawer()} style={styles.closeSidebarButton}>
           <Ionicons name="close" size={24} color="#666" />
         </TouchableOpacity>
