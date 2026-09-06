@@ -1,6 +1,6 @@
 import { View } from "react-native";
 import { makeAssistantToolUI } from "@assistant-ui/react-native";
-import { StatementCard } from "../../../components/StatementCard";
+import { StatementCard } from "../../../features/statements/components/StatementCard";
 
 export const StatementCardToolUI = makeAssistantToolUI({
   toolName: "StatementCard",

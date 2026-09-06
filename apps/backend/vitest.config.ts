@@ -12,7 +12,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@boit/types': path.resolve(__dirname, '../../packages/types/src/index.ts'),
+      '@boit/shared-types': path.resolve(__dirname, '../../packages/shared-types/src/index.ts'),
       '@': path.resolve(__dirname, './src'),
     },
   },

@@ -1,17 +1,17 @@
 {
   "expo": {
-    "name": "boit-mobile",
-    "slug": "boit-mobile",
+    "name": "Al Masraf Mobile",
+    "slug": "al-masraf-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
-    "scheme": "boit-mobile",
+    "scheme": "al-masraf-mobile",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "ae.almasraf.boit"
+      "bundleIdentifier": "ae.almasraf.mobile"
     },
     "android": {
-      "package": "ae.almasraf.boit",
+      "package": "ae.almasraf.mobile",
       "softwareKeyboardLayoutMode": "resize"
     },
     "web": {

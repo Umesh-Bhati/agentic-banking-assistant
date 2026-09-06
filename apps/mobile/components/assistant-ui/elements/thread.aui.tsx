@@ -15,8 +15,9 @@ import { haptics } from "../../../lib/haptics";
 
 const suggestions = [
   "Show my recent transactions",
-  "Pay my utility bill",
-  "View my credit card statement",
+  "Block my credit card",
+  "Download account statement",
+  "Check my account balance",
 ];
 
 function SuggestionChip({ prompt }: { prompt: string }) {
@@ -68,6 +69,8 @@ function ChatMessages() {
           style={styles.flex}
           contentContainerStyle={styles.messageList}
           showsVerticalScrollIndicator={false}
+          keyboardDismissMode="on-drag"
+          keyboardShouldPersistTaps="handled"
         >
           {() => <MessageBubble />}
         </ThreadPrimitive.MessagesFlatList>
@@ -80,16 +83,21 @@ export function Thread() {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
 
+  // Offset iOS by 90px (comfortable spacing above keyboard)
+  // Offset Android by 80px (accounts for status bar + navigation drawer header)
+  const keyboardOffset = Platform.OS === 'ios' ? 90 : 80;
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={keyboardOffset}
       >
         <View style={styles.flex}>
           <ChatMessages />
         </View>
-        <View style={{ paddingBottom: insets.bottom + 8 }}>
+        <View style={{ paddingBottom: Platform.OS === 'ios' ? Math.max(insets.bottom, 8) : 8 }}>
           <Composer />
         </View>
       </KeyboardAvoidingView>

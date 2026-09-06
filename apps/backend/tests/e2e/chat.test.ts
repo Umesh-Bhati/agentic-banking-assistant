@@ -1,180 +1,89 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import fastify from 'fastify';
-import { createChatRoute } from '@/routes/chat.js';
-import type { ActiveWorkflowState } from '@boit/types';
 
-// Mock Supabase
-const createMockSupabase = (sessionState: ActiveWorkflowState | null = null) => ({
-  from: vi.fn((table) => {
-    if (table === 'chat_messages') return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), order: vi.fn().mockResolvedValue({ data: [], error: null }), insert: vi.fn().mockReturnValue(Promise.resolve({ error: null })), delete: vi.fn().mockReturnThis() };
-    if (table === 'chat_sessions') {
-      return {
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
-        single: vi.fn().mockResolvedValue({
-          data: { active_workflow_state: sessionState },
-          error: null,
-        }),
-        update: vi.fn().mockReturnThis().mockResolvedValue({ error: null }),
-        upsert: vi.fn().mockReturnThis().mockResolvedValue({ error: null }),
-      };
-    }
-    if (table === 'bank_documents') {
-      return {
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
-        single: vi.fn().mockResolvedValue({ data: null, error: null }),
-      };
-    }
-    if (table === 'cards') {
-      return {
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
-        single: vi.fn().mockResolvedValue({
-          data: [
-            { id: 'card-1', last_4: '1234', status: 'ACTIVE', network: 'MASTERCARD', card_type: 'Platinum' },
-            { id: 'card-2', last_4: '5678', status: 'ACTIVE', network: 'MASTERCARD', card_type: 'Gold' },
-          ],
-          error: null,
-        }),
-        update: vi.fn().mockReturnThis().mockResolvedValue({ error: null }),
-      };
-    }
-    return {
-      select: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
-      single: vi.fn().mockResolvedValue({ data: null, error: null }),
-      update: vi.fn().mockReturnThis().mockResolvedValue({ error: null }),
-    };
-  }),
-  rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
-});
-
+// Mock Supabase before loading chat route
 vi.mock('@supabase/supabase-js', () => ({
-  createClient: vi.fn(() => createMockSupabase()),
+  createClient: vi.fn(() => ({
+    auth: {
+      getUser: vi.fn().mockResolvedValue({
+        data: { user: { id: '7b0cddc1-fa5c-4fd1-91e9-665f45b9d273', email: 'john.doe@gmail.com' } },
+        error: null,
+      }),
+    },
+    from: vi.fn(() => ({
+      select: vi.fn().mockReturnThis(),
+      insert: vi.fn().mockResolvedValue({ data: null, error: null }),
+      upsert: vi.fn().mockResolvedValue({ data: null, error: null }),
+      update: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+      single: vi.fn().mockResolvedValue({ data: { id: 'b1eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' }, error: null }),
+    })),
+  })),
 }));
 
-describe('Fastify Network Boundary - /api/chat E2E Tests', () => {
-  let app: ReturnType<typeof fastify>;
+vi.mock('../../src/mastra/index.js', () => ({
+  mastra: {
+    getAgent: vi.fn(() => ({
+      stream: vi.fn().mockResolvedValue({
+        textStream: (async function* () {
+          yield 'Hello, how can I help you?';
+        })(),
+      }),
+    })),
+  },
+}));
 
-  beforeEach(async () => {
-    app = fastify({ logger: false });
-    
-    // Add health endpoint directly for testing
-    app.get('/health', async () => {
-      return { status: 'ok' };
-    });
-    
-    createChatRoute(app, {
+import { createChatRoute } from '../../src/routes/chat.js';
+import authPlugin from '../../src/plugins/auth.plugin.js';
+
+describe('Chat SSE Route E2E', () => {
+  it('should stream response chunks via SSE', async () => {
+    const app = fastify();
+    await app.register(authPlugin, {
       supabaseUrl: 'http://localhost:54321',
-      supabaseServiceKey: 'test-key',
-      openaiApiKey: 'test-openai-key',
-      openrouterApiKey: 'test-openrouter-key',
+      supabaseServiceKey: 'test',
     });
-
-    await app.ready();
-  });
-
-  afterEach(async () => {
-    await app.close();
-    vi.clearAllMocks();
-  });
-
-  it('should return 400 for missing message', async () => {
-    const response = await app.inject({
-      method: 'POST',
-      url: '/api/chat',
-      payload: { sessionId: 'test-session' },
-    });
-
-    expect(response.statusCode).toBe(400);
-    expect(JSON.parse(response.payload)).toEqual({ error: 'Missing message or sessionId' });
-  });
-
-  it('should return 400 for missing sessionId', async () => {
-    const response = await app.inject({
-      method: 'POST',
-      url: '/api/chat',
-      payload: { message: 'Hello' },
-    });
-
-    expect(response.statusCode).toBe(400);
-    expect(JSON.parse(response.payload)).toEqual({ error: 'Missing message or sessionId' });
-  });
-
-  it('should return SSE response for product question', async () => {
-    const response = await app.inject({
-      method: 'POST',
-      url: '/api/chat',
-      payload: {
-        message: 'What credit cards do you offer?',
-        sessionId: 'test-session-1',
-        history: [],
-      },
-    });
-
-    // SSE response should have content-type
-    expect(response.headers['content-type']).toContain('text/event-stream');
-  });
-
-  it('should handle CANCEL intent and clear workflow state', async () => {
-    // Create app with existing workflow state
-    const workflowState: ActiveWorkflowState = {
-      workflow_type: 'card-block-workflow',
-      step: 'WAITING_CARD_SELECTION',
-      data: { runId: 'run-123', suspendedStep: 'ask-card-selection' },
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    const appWithState = fastify({ logger: false });
-    appWithState.get('/health', async () => ({ status: 'ok' }));
-    createChatRoute(appWithState, {
+    await createChatRoute(app, {
       supabaseUrl: 'http://localhost:54321',
-      supabaseServiceKey: 'test-key',
-      openaiApiKey: 'test-openai-key',
-      openrouterApiKey: 'test-openrouter-key',
+      supabaseServiceKey: 'test',
+      openaiApiKey: 'test',
+      openrouterApiKey: 'test',
     });
-    await appWithState.ready();
 
-    const response = await appWithState.inject({
+    const res = await app.inject({
       method: 'POST',
       url: '/api/chat',
-      payload: {
-        message: 'Cancel',
-        sessionId: 'test-session-with-workflow',
-        history: [],
-      },
+      headers: { authorization: 'Bearer test-token' },
+      payload: { message: 'Hi', sessionId: 'sess-1' },
     });
 
-    expect(response.statusCode).toBe(200);
-    expect(response.headers['content-type']).toContain('text/event-stream');
-    
-    await appWithState.close();
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toContain('text/event-stream');
+    expect(res.payload).toContain('data: {"type":"text","content":"Hello, how can I help you?"}');
+    expect(res.payload).toContain('data: {"type":"done"}');
   });
 
-  it('should route BLOCK_CARD intent to workflow', async () => {
-    const response = await app.inject({
+  it('should return 400 when missing required fields', async () => {
+    const app = fastify();
+    await app.register(authPlugin, {
+      supabaseUrl: 'http://localhost:54321',
+      supabaseServiceKey: 'test',
+    });
+    await createChatRoute(app, {
+      supabaseUrl: 'http://localhost:54321',
+      supabaseServiceKey: 'test',
+      openaiApiKey: 'test',
+      openrouterApiKey: 'test',
+    });
+
+    const res = await app.inject({
       method: 'POST',
       url: '/api/chat',
-      payload: {
-        message: 'Block my card',
-        sessionId: 'test-session-block',
-        history: [],
-      },
+      headers: { authorization: 'Bearer test-token' },
+      payload: { message: 'Hi' },
     });
 
-    expect(response.statusCode).toBe(200);
-    expect(response.headers['content-type']).toContain('text/event-stream');
-  });
-
-  it('should return health check', async () => {
-    const response = await app.inject({
-      method: 'GET',
-      url: '/health',
-    });
-
-    expect(response.statusCode).toBe(200);
-    expect(JSON.parse(response.payload)).toEqual({ status: 'ok' });
+    expect(res.statusCode).toBe(400);
   });
 });

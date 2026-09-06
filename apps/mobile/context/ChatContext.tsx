@@ -1,12 +1,14 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import * as SecureStore from 'expo-secure-store';
+import * as LocalAuthentication from 'expo-local-authentication';
 import Constants from 'expo-constants';
-import type { StatementCardData } from '@boit/types';
+import type { StatementCardData } from '@boit/shared-types';
 import { FlatList } from 'react-native';
 import { useLocalRuntime } from '@assistant-ui/react-native';
 import type { ChatModelAdapter, AssistantRuntime } from '@assistant-ui/react-native';
 
 const LOGGED_IN_KEY = 'almasraf_logged_in';
+const AUTH_TOKEN_KEY = 'almasraf_auth_token';
 
 export interface Message {
   id: string;
@@ -47,11 +49,15 @@ const API_BASE_URL = getApiBaseUrl();
 interface ChatContextType {
   isLoggedIn: boolean;
   loginLoading: boolean;
+  loginError?: string;
+  authToken: string | null;
+  canUseBiometrics: boolean;
   email: string;
   setEmail: (e: string) => void;
   password: string;
   setPassword: (p: string) => void;
   handleLogin: () => void;
+  handleBiometricAuth: () => void;
   handleLogout: () => void;
   
   sessionId: string;
@@ -63,7 +69,9 @@ interface ChatContextType {
   isSessionLoading: boolean;
   
   showPinModal: boolean;
+  setShowPinModal: (s: boolean) => void;
   pinModalData: { cardType: string; last4: string } | null;
+  setPinModalData: (d: { cardType: string; last4: string } | null) => void;
   pinLoading: boolean;
   pinError: string | undefined;
   
@@ -82,9 +90,12 @@ const ChatContext = createContext<ChatContextType | undefined>(undefined);
 
 export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [email, setEmail] = useState('john.doe@almasraf.ae');
+  const [email, setEmail] = useState('john.doe@gmail.com');
   const [password, setPassword] = useState('demo1234');
   const [loginLoading, setLoginLoading] = useState(false);
+  const [loginError, setLoginError] = useState<string | undefined>();
+  const [authToken, setAuthToken] = useState<string | null>(null);
+  const [canUseBiometrics, setCanUseBiometrics] = useState(false);
 
   const [sessionId, setSessionId] = useState<string>(generateUUID());
   const [messages, setMessages] = useState<Message[]>([]);
@@ -103,10 +114,17 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const checkAuth = async () => {
       try {
-        const stored = await SecureStore.getItemAsync(LOGGED_IN_KEY);
-        if (stored === 'true') {
+        const storedToken = await SecureStore.getItemAsync(AUTH_TOKEN_KEY);
+        const storedLoggedIn = await SecureStore.getItemAsync(LOGGED_IN_KEY);
+        const hasHardware = await LocalAuthentication.hasHardwareAsync();
+        const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+
+        setCanUseBiometrics(hasHardware && isEnrolled && !!storedToken);
+
+        if (storedLoggedIn === 'true' && storedToken) {
+          setAuthToken(storedToken);
           setIsLoggedIn(true);
-          fetchSessions();
+          fetchSessions(storedToken);
         }
       } catch (e) {
         console.warn('Failed to read auth from SecureStore:', e);
@@ -124,6 +142,9 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', `${API_BASE_URL}/api/chat`);
       xhr.setRequestHeader('Content-Type', 'application/json');
+      if (authToken) {
+        xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
+      }
 
       xhr.onreadystatechange = () => {
         if (xhr.readyState === 3 || xhr.readyState === 4) {
@@ -165,7 +186,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
             if (data === '[DONE]') continue;
             try {
               const parsed = JSON.parse(data);
-              if (parsed.type === 'token') {
+              if ((parsed.type === 'text' || parsed.type === 'token') && parsed.content) {
                 text += parsed.content;
                 yield { content: [{ type: 'text', text }, ...toolCalls] };
               } else if (parsed.type === 'tool_call') {
@@ -191,11 +212,16 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         }
       }
     }
-  }), [sessionId]);
+  }), [sessionId, authToken]);
 
-  const fetchSessions = async () => {
+  const fetchSessions = async (tokenOverride?: string) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/chat/sessions`);
+      const activeToken = tokenOverride || authToken;
+      const headers: Record<string, string> = {};
+      if (activeToken) {
+        headers['Authorization'] = `Bearer ${activeToken}`;
+      }
+      const res = await fetch(`${API_BASE_URL}/api/chat/sessions`, { headers });
       if (res.ok) {
         const data = await res.json();
         setSessions(data || []);
@@ -209,7 +235,11 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     setSessionId(id);
     setIsSessionLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/chat/sessions/${id}/messages`);
+      const headers: Record<string, string> = {};
+      if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
+      }
+      const res = await fetch(`${API_BASE_URL}/api/chat/sessions/${id}/messages`, { headers });
       if (res.ok) {
         const data = await res.json();
         const loadedMessages: Message[] = (data || []).map((msg: any) => ({
@@ -235,7 +265,11 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
   const deleteSession = async (id: string) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/chat/sessions/${id}`, { method: 'DELETE' });
+      const headers: Record<string, string> = {};
+      if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
+      }
+      const res = await fetch(`${API_BASE_URL}/api/chat/sessions/${id}`, { method: 'DELETE', headers });
       if (res.ok) {
         setSessions(prev => prev.filter(s => s.id !== id));
         if (id === sessionId) {
@@ -247,24 +281,68 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const handleLogin = () => {
-    if (!email.trim() || !password.trim()) return;
-    setLoginLoading(true);
-    setTimeout(async () => {
-      setLoginLoading(false);
-      try {
-        await SecureStore.setItemAsync(LOGGED_IN_KEY, 'true');
-      } catch (e) {
-        console.warn('Failed to save auth to SecureStore:', e);
+  const handleBiometricAuth = async () => {
+    try {
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: 'Unlock Al Masraf Mobile Banking',
+        fallbackLabel: 'Enter Password',
+      });
+      if (result.success) {
+        const storedToken = await SecureStore.getItemAsync(AUTH_TOKEN_KEY);
+        if (storedToken) {
+          setAuthToken(storedToken);
+          setIsLoggedIn(true);
+          fetchSessions(storedToken);
+        }
       }
-      setIsLoggedIn(true);
-      fetchSessions();
-    }, 400);
+    } catch (e) {
+      console.warn('Biometric auth error:', e);
+    }
+  };
+
+  const handleLogin = async () => {
+    if (!email.trim() || !password.trim()) {
+      setLoginError('Please enter your Email Address and Password.');
+      return;
+    }
+    setLoginLoading(true);
+    setLoginError(undefined);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: email.trim(),
+          password: password.trim(),
+        }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.success && data.token) {
+        const token = data.token;
+        await SecureStore.setItemAsync(AUTH_TOKEN_KEY, token);
+        await SecureStore.setItemAsync(LOGGED_IN_KEY, 'true');
+        setAuthToken(token);
+        setIsLoggedIn(true);
+        setPassword('');
+        fetchSessions(token);
+      } else {
+        setLoginError(data.error || 'Invalid email or password. Please try again.');
+      }
+    } catch (e: any) {
+      setLoginError('Network error. Please make sure the backend server is running.');
+    } finally {
+      setLoginLoading(false);
+    }
   };
 
   const handleLogout = () => {
-    SecureStore.deleteItemAsync(LOGGED_IN_KEY).catch(e => console.warn('Failed to clear auth:', e));
+    SecureStore.deleteItemAsync(LOGGED_IN_KEY).catch(() => {});
+    SecureStore.deleteItemAsync(AUTH_TOKEN_KEY).catch(() => {});
     setIsLoggedIn(false);
+    setAuthToken(null);
     setMessages([]);
     setSessions([]);
     setSessionId(generateUUID());
@@ -311,7 +389,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           
           try {
             const parsed = JSON.parse(data);
-            if (parsed.type === 'token' && parsed.content) {
+            if ((parsed.type === 'text' || parsed.type === 'token') && parsed.content) {
               assistantContent += parsed.content;
               tokenUpdated = true;
             } else if (parsed.type === 'done') {
@@ -368,6 +446,9 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', `${API_BASE_URL}/api/chat`);
     xhr.setRequestHeader('Content-Type', 'application/json');
+    if (authToken) {
+      xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
+    }
 
     let seenBytes = 0;
 
@@ -412,29 +493,37 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     setPinError(undefined);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/auth`, {
+      const isBiometric = pin === 'BIOMETRIC_SUCCESS' || pin.startsWith('bio_');
+      const targetActionId = (pinModalData as any)?.actionId || 'act_demo';
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
+      }
+
+      const response = await fetch(`${API_BASE_URL}/actions/${targetActionId}/authorize`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          authToken: pin,
-          sessionId: sessionId,
-        }),
+        headers,
+        body: JSON.stringify(
+          isBiometric 
+            ? { biometricToken: `bio_verified_${Date.now()}` } 
+            : { pin }
+        ),
       });
 
       const data = await response.json();
 
-      if (response.ok && data.success) {
+      if (response.ok && (data.success || data.action?.status === 'AUTHORIZED' || data.action?.status === 'COMPLETED')) {
+        const cardType = pinModalData?.cardType || 'Credit';
+        const last4 = pinModalData?.last4 || '****';
         setShowPinModal(false);
         setPinModalData(null);
         setMessages(prev => [...prev, {
           id: Date.now().toString(),
           role: 'assistant',
-          content: data.message,
+          content: `✅ **Card Block Successful**\n\nYour ${cardType} card ending in **•••• ${last4}** has been blocked.`,
         }]);
       } else {
-        setPinError(data.error || 'Authorization failed');
+        setPinError(data.error || 'Authorization failed. Please check your passcode.');
       }
     } catch (error) {
       setPinError('Network error. Please try again.');
@@ -455,11 +544,15 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       value={{
         isLoggedIn,
         loginLoading,
+        loginError,
+        authToken,
+        canUseBiometrics,
         email,
         setEmail,
         password,
         setPassword,
         handleLogin,
+        handleBiometricAuth,
         handleLogout,
         sessionId,
         sessions,
@@ -469,7 +562,9 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         isLoading,
         isSessionLoading,
         showPinModal,
+        setShowPinModal,
         pinModalData,
+        setPinModalData,
         pinLoading,
         pinError,
         handleNewChat,

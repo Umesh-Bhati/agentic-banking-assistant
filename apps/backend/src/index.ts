@@ -1,8 +1,11 @@
 import fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
 import { config } from 'dotenv';
-import { createChatRoute, createAuthRoute } from './routes/chat.js';
+import { createChatRoute } from './routes/chat.js';
+import { createActionRoutes } from './routes/action.routes.js';
 import { createStatementRoute } from './routes/statements.js';
+import { createAuthRoutes } from './routes/auth.routes.js';
+import authPlugin from './plugins/auth.plugin.js';
 
 config();
 
@@ -22,12 +25,10 @@ export async function createServer(): Promise<FastifyInstance> {
     return { status: 'ok' };
   });
 
-  // Register chat route
   const requiredEnv = [
     'SUPABASE_URL',
     'SUPABASE_SERVICE_KEY',
     'OPENAI_API_KEY',
-    'OPENROUTER_API_KEY',
   ];
 
   for (const key of requiredEnv) {
@@ -37,19 +38,34 @@ export async function createServer(): Promise<FastifyInstance> {
   }
 
   if (requiredEnv.every(key => process.env[key])) {
-    await createStatementRoute(server, {
-      supabaseUrl: process.env.SUPABASE_URL!,
-      supabaseServiceKey: process.env.SUPABASE_SERVICE_KEY!
+    const supabaseUrl = process.env.SUPABASE_URL!;
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY!;
+
+    await server.register(authPlugin, {
+      supabaseUrl,
+      supabaseServiceKey,
     });
-    await createAuthRoute(server, {
-      supabaseUrl: process.env.SUPABASE_URL!,
-      supabaseServiceKey: process.env.SUPABASE_SERVICE_KEY!
+
+    await createAuthRoutes(server, {
+      supabaseUrl,
+      supabaseServiceKey,
     });
+
+    await createActionRoutes(server, {
+      supabaseUrl,
+      supabaseServiceKey,
+    });
+    
     await createChatRoute(server, {
-      supabaseUrl: process.env.SUPABASE_URL!,
-      supabaseServiceKey: process.env.SUPABASE_SERVICE_KEY!,
+      supabaseUrl,
+      supabaseServiceKey,
       openaiApiKey: process.env.OPENAI_API_KEY!,
       openrouterApiKey: process.env.OPENROUTER_API_KEY!,
+    });
+
+    await createStatementRoute(server, {
+      supabaseUrl,
+      supabaseServiceKey,
     });
   }
 

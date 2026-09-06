@@ -21,15 +21,12 @@ const UserText: TextMessagePartComponent = ({ text }) => {
   );
 };
 
-import Markdown from "react-native-markdown-display";
+import { BankingMessageRenderer } from "../../../features/chat/components/BankingMessageRenderer";
 
 const AssistantText: TextMessagePartComponent = ({ text }) => {
-  const { colors } = useTheme();
   return (
     <View style={{overflow: 'hidden' }}>
-      <Markdown style={{ body: { ...styles.assistantText, color: colors.foreground } }}>
-        {text}
-      </Markdown>
+      <BankingMessageRenderer content={text} />
     </View>
   );
 };

@@ -11,7 +11,6 @@
   },
   "dependencies": {
     "@assistant-ui/react-native": "^0.1.40",
-    "@boit/types": "workspace:*",
     "@expo/vector-icons": "^15.1.1",
     "assistant-cloud": "^0.1.43",
     "expo": "~57.0.20",
@@ -33,7 +32,8 @@
     "react-native-reanimated": "^4.5.1",
     "react-native-safe-area-context": "5.7.0",
     "react-native-screens": "~4.26.2",
-    "react-native-worklets": "^0.10.1"
+    "react-native-worklets": "^0.10.1",
+    "@boit/shared-types": "workspace:*"
   },
   "devDependencies": {
     "@testing-library/jest-native": "^5.4.3",
