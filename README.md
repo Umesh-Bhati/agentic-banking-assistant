@@ -103,5 +103,3 @@ This project showcases how to implement AI safely in a FinTech context:
 
 ---
 
-## 📝 License
-This project is open-source and available under the [ISC License](LICENSE).
