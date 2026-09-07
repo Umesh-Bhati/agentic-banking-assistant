@@ -20,7 +20,7 @@ export const generateStatementTool = createTool({
     }
     
     let resolvedAccountId = accountId;
-    let resolvedAccountNumber = 'AE2403300000123456789';
+    let resolvedAccountNumber = '';
 
     try {
       const supabase = getSharedSupabaseClient();
@@ -41,19 +41,24 @@ export const generateStatementTool = createTool({
           throw new Error('No products found for this user.');
         }
       } else {
-        const { data: prod } = await supabase
+        const { data: prod, error } = await supabase
           .from('customer_products')
-          .select('product_number')
+          .select('product_number, customer_id')
           .eq('id', resolvedAccountId)
           .single();
-        if (prod?.product_number) {
-          resolvedAccountNumber = prod.product_number;
+          
+        if (error || !prod) {
+          throw new Error(`Invalid account ID. Could not find product with ID: ${resolvedAccountId}. Please call getUserProductsTool to get the correct product ID first.`);
         }
+        
+        if (prod.customer_id !== userId) {
+          throw new Error('Unauthorized: You cannot generate a statement for a product that does not belong to you.');
+        }
+        
+        resolvedAccountNumber = prod.product_number;
       }
     } catch (err: any) {
-      if (!resolvedAccountId) {
-        throw new Error(err.message || 'Failed to resolve product for statement generation.');
-      }
+      throw err;
     }
 
     const statementId = `stmt_${Math.random().toString(36).substring(2, 9)}`;

@@ -88,8 +88,23 @@ export async function createChatRoute(
 
     let fullAssistantResponse = '';
 
+    // Fetch user profile for context
+    let profileInfo = '';
     try {
-      let previousMessages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+      const { data: profile } = await supabase
+        .from('customer_profiles')
+        .select('full_name, email, phone')
+        .eq('user_id', authUserId)
+        .single();
+      if (profile) {
+        profileInfo = `Name: ${profile.full_name}, Email: ${profile.email}, Phone: ${profile.phone}`;
+      }
+    } catch (err) {
+      console.error('Failed to fetch profile info for chat context', err);
+    }
+
+    try {
+      let previousMessages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [];
 
       if (history.length > 0) {
         previousMessages = history.map(msg => ({
@@ -106,7 +121,19 @@ export async function createChatRoute(
           }));
       }
 
+      const systemMessage = {
+        role: 'system' as const,
+        content: `IMPORTANT CONTEXT: You are talking to the authenticated user.
+User Profile: ${profileInfo || 'Unknown'}
+
+SECURITY RULES:
+1. You MUST ONLY provide banking data (accounts, balances, transactions, statements, cards) for this authenticated user.
+2. If the user asks for account details or information belonging to ANY other person (e.g. by name), you MUST refuse and state that you can only access the logged-in user's data. Do NOT use any tools for other people's data.
+3. If the user asks who they are or asks for their own profile details, you should provide the information from the User Profile above.`
+      };
+
       const messages: any = [
+        systemMessage,
         ...previousMessages,
         { role: 'user' as const, content: message }
       ];

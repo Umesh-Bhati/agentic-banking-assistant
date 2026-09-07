@@ -1,3 +1,4 @@
+import React, { useEffect } from 'react';
 import { View, StyleSheet, ActivityIndicator } from 'react-native';
 import { Thread } from '../components/assistant-ui/elements/thread.aui';
 import { Colors } from '../constants/theme';
@@ -9,7 +10,7 @@ import { LoginScreen } from '../features/auth/components/LoginScreen';
 import { useLocalRuntime, type ThreadMessageLike } from '@assistant-ui/react-native';
 
 function ChatRuntimeWrapper({ sessionId }: { sessionId: string }) {
-  const { chatModelAdapter, messages } = useChat();
+  const { chatModelAdapter, messages, setTriggerUserMessage, setTriggerAssistantMessage } = useChat();
 
   const initialMessages: ThreadMessageLike[] = messages.map(msg => {
     if (msg.role === 'user') {
@@ -30,6 +31,20 @@ function ChatRuntimeWrapper({ sessionId }: { sessionId: string }) {
   });
 
   const runtime = useLocalRuntime(chatModelAdapter, { initialMessages });
+
+  useEffect(() => {
+    if (setTriggerUserMessage) {
+      setTriggerUserMessage(() => (text: string) => {
+        runtime.append({ role: "user", content: [{ type: "text", text }] });
+      });
+    }
+    if (setTriggerAssistantMessage) {
+      setTriggerAssistantMessage(() => (text: string) => {
+        runtime.append({ role: "assistant", content: [{ type: "text", text }] } as any);
+      });
+    }
+  }, [runtime, setTriggerUserMessage, setTriggerAssistantMessage]);
+
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>

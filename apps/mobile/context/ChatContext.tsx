@@ -90,6 +90,10 @@ interface ChatContextType {
   
   flatListRef: React.RefObject<FlatList<Message> | null>;
   chatModelAdapter: any;
+  triggerUserMessage?: (text: string) => void;
+  triggerAssistantMessage?: (text: string) => void;
+  setTriggerAssistantMessage?: (fn: (text: string) => void) => void;
+  setTriggerUserMessage?: (fn: (text: string) => void) => void;
 }
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
@@ -108,6 +112,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [isSessionsLoading, setIsSessionsLoading] = useState(false);
+  const [triggerUserMessage, setTriggerUserMessage] = useState<((text: string) => void) | undefined>(undefined);
+  const [triggerAssistantMessage, setTriggerAssistantMessage] = useState<((text: string) => void) | undefined>(undefined);
   
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -705,7 +711,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         const last4 = pinModalData?.last4 || '****';
         setShowPinModal(false);
         setPinModalData(null);
-        setMessages(prev => [...prev, {
+        if (triggerAssistantMessage) { triggerAssistantMessage(`✅ **Card Block Successful**\n\nYour ${cardType} card ending in **•••• ${last4}** has been blocked.`); } else setMessages(prev => [...prev, {
           id: Date.now().toString(),
           role: 'assistant',
           content: `✅ **Card Block Successful**\n\nYour ${cardType} card ending in **•••• ${last4}** has been blocked.`,
@@ -724,7 +730,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     setShowPinModal(false);
     setPinModalData(null);
     setPinError(undefined);
-    sendMessage('Cancel');
+    if (triggerUserMessage) triggerUserMessage('Cancel'); else sendMessage('Cancel');
   };
 
   return (
@@ -769,6 +775,10 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         handlePinCancel,
         flatListRef,
         chatModelAdapter,
+        triggerUserMessage,
+        setTriggerUserMessage,
+        triggerAssistantMessage,
+        setTriggerAssistantMessage,
       }}
     >
       {children}

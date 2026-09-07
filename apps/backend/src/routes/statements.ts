@@ -26,6 +26,10 @@ export async function createStatementRoute(
         return reply.code(404).send({ error: 'Account/Product not found' });
       }
 
+      if (product.customer_id !== request.customerId) {
+        return reply.code(403).send({ error: 'Unauthorized access to this statement' });
+      }
+
       let transactions: any[] = [];
       if (product.linked_account_id) {
         let query = supabase

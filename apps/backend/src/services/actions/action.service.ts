@@ -37,7 +37,7 @@ export class ActionService {
     const rawAction = await this.actionRepo.getById(actionId);
     const action = this.validateOwnership(rawAction, actionId, userId);
 
-    if (action.status !== ActionState.PENDING_SELECTION) {
+    if (action.status !== ActionState.PENDING_SELECTION && action.status !== ActionState.PENDING_AUTHORIZATION && action.status !== ActionState.PENDING_CONFIRMATION) {
       throw new Error(`Invalid state transition from ${action.status}`);
     }
     
@@ -48,7 +48,7 @@ export class ActionService {
     const rawAction = await this.actionRepo.getById(actionId);
     const action = this.validateOwnership(rawAction, actionId, userId);
 
-    if (action.status !== ActionState.PENDING_CONFIRMATION) {
+    if (action.status !== ActionState.PENDING_CONFIRMATION && action.status !== ActionState.PENDING_AUTHORIZATION) {
       throw new Error(`Invalid state transition from ${action.status}`);
     }
 
