@@ -85,16 +85,17 @@ export function CardSelectionCard({ actionId, cards }: CardSelectionCardProps) {
       {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
 
       <View style={styles.cardList}>
-        {cards.map((card) => {
-          const isSelected = selectedCardId === card.id;
-          const isLoading = loadingCardId === card.id;
+        {cards.map((card, index) => {
+          const uniqueId = card.id || `fallback-id-${index}`;
+          const isSelected = selectedCardId === uniqueId;
+          const isLoading = loadingCardId === uniqueId;
           const cardName = card.type || card.cardType || 'Credit Card';
 
           return (
             <TouchableOpacity
-              key={card.id}
+              key={uniqueId}
               style={[styles.cardItem, isSelected && styles.cardItemSelected]}
-              onPress={() => handleSelectCard(card)}
+              onPress={() => handleSelectCard({ ...card, id: uniqueId })}
               disabled={loadingCardId !== null}
               activeOpacity={0.8}
             >
@@ -108,7 +109,7 @@ export function CardSelectionCard({ actionId, cards }: CardSelectionCardProps) {
 
               <TouchableOpacity
                 style={[styles.selectButton, isSelected && styles.selectButtonSelected]}
-                onPress={() => handleSelectCard(card)}
+                onPress={() => handleSelectCard({ ...card, id: uniqueId })}
                 disabled={loadingCardId !== null}
               >
                 {isLoading ? (

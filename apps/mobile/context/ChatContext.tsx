@@ -134,6 +134,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       if (res.ok) {
         const data = await res.json();
         setUserProfile(data);
+      } else if (res.status === 401) {
+        handleLogout();
       }
     } catch (e) {
       console.warn('Failed to fetch profile:', e);
@@ -312,11 +314,16 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       };
       if (activeToken) {
         headers['Authorization'] = `Bearer ${activeToken}`;
+      } else {
+        setIsSessionsLoading(false);
+        return;
       }
       const res = await fetch(`${API_BASE_URL}/api/chat/sessions`, { headers });
       if (res.ok) {
         const data = await res.json();
         setSessions(data || []);
+      } else if (res.status === 401) {
+        handleLogout();
       }
     } catch (e) {
       console.warn('Failed to fetch sessions:', e);
@@ -345,6 +352,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           statementData: msg.ui_data?.type === 'STATEMENT_CARD' ? msg.ui_data.data : undefined,
         }));
         setMessages(loadedMessages);
+      } else if (res.status === 401) {
+        handleLogout();
       }
     } catch (e) {
       console.warn('Failed to fetch messages:', e);
@@ -373,6 +382,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         if (id === sessionId) {
           handleNewChat();
         }
+      } else if (res.status === 401) {
+        handleLogout();
       }
     } catch (e) {
       console.warn('Failed to delete session:', e);

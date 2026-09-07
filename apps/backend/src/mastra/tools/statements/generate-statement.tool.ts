@@ -28,31 +28,31 @@ export const generateStatementTool = createTool({
       if (!userId) throw new Error('Authentication required: no user context available.');
 
       if (!resolvedAccountId) {
-        const { data: accounts } = await supabase
-          .from('bank_accounts')
-          .select('id, account_number, type')
+        const { data: products } = await supabase
+          .from('customer_products')
+          .select('id, product_number, product_type')
           .eq('customer_id', userId);
 
-        if (accounts && accounts.length > 0) {
-          const primaryAccount = accounts.find((a: any) => a.type === 'CURRENT') || accounts[0];
-          resolvedAccountId = primaryAccount.id;
-          resolvedAccountNumber = primaryAccount.account_number;
+        if (products && products.length > 0) {
+          const primaryProduct = products.find((p: any) => p.product_type === 'CURRENT_ACCOUNT') || products[0];
+          resolvedAccountId = primaryProduct.id;
+          resolvedAccountNumber = primaryProduct.product_number;
         } else {
-          throw new Error('No bank accounts found for this user.');
+          throw new Error('No products found for this user.');
         }
       } else {
-        const { data: acc } = await supabase
-          .from('bank_accounts')
-          .select('account_number')
+        const { data: prod } = await supabase
+          .from('customer_products')
+          .select('product_number')
           .eq('id', resolvedAccountId)
           .single();
-        if (acc?.account_number) {
-          resolvedAccountNumber = acc.account_number;
+        if (prod?.product_number) {
+          resolvedAccountNumber = prod.product_number;
         }
       }
     } catch (err: any) {
       if (!resolvedAccountId) {
-        throw new Error(err.message || 'Failed to resolve account for statement generation.');
+        throw new Error(err.message || 'Failed to resolve product for statement generation.');
       }
     }
 
