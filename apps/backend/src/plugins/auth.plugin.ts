@@ -22,7 +22,7 @@ export default fp(async function authPlugin(
 
   fastify.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply) => {
     // Skip auth for health check and login route
-    if (request.url === '/health' || request.url === '/api/auth/login') return;
+    if (request.url === '/health' || request.url === '/api/auth/login' || request.url === '/api/auth/signup') return;
 
     let token = '';
     const authHeader = request.headers.authorization;

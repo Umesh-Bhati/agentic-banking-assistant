@@ -50,9 +50,8 @@ export class AccountService {
     fromDate?: string,
     toDate?: string
   ): Promise<Transaction[]> {
-    const targetAccountId = (!accountId || accountId === 'acc-demo')
-      ? 'c1eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
-      : accountId;
+    if (!accountId) throw new Error('Account ID is required for transaction lookup.');
+    const targetAccountId = accountId;
 
     let query = this.supabase
       .from('transactions')

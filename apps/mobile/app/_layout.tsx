@@ -5,6 +5,7 @@ import { ChatProvider, useChat } from '../context/ChatContext';
 import { View, Text, TouchableOpacity, FlatList, StyleSheet, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, BorderRadius } from '../constants/theme';
+import { ProfileMenu } from '../features/profile/components/ProfileMenu';
 
 function CustomDrawerContent(props: any) {
   const {
@@ -84,6 +85,7 @@ function DrawerLayout() {
         headerStyle: { backgroundColor: Colors.accent },
         headerTintColor: Colors.textLight,
         headerTitle: 'Al Masraf Assistant',
+        headerRight: () => isLoggedIn ? <ProfileMenu /> : null,
         headerLeft: () => (
           <TouchableOpacity 
             onPress={() => navigation.openDrawer()} 

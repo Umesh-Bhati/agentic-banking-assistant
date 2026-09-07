@@ -1,17 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, Modal, ActivityIndicator, KeyboardAvoidingView, Platform, Pressable } from 'react-native';
 import * as LocalAuthentication from 'expo-local-authentication';
-import { CreditCard, ScanFace, Fingerprint, KeyRound, ShieldCheck, XCircle, AlertCircle } from 'lucide-react-native';
+import { CreditCard, ScanFace, Fingerprint, KeyRound, ShieldCheck, XCircle, AlertCircle, Mail, Lock } from 'lucide-react-native';
 import { Colors, Spacing, Typography, BorderRadius, Shadows } from '../../../constants/theme';
 
-interface PinModalProps {
+export interface PinModalProps {
   visible: boolean;
   cardType: string;
   last4: string;
-  onAuthSubmit: (pin: string) => void;
+  onAuthSubmit: (data: string | { pin?: string; biometricToken?: string; email?: string; password?: string }) => void;
   onCancel: () => void;
   loading?: boolean;
   error?: string;
+  authPreference?: 'PIN' | 'BIOMETRIC' | 'CREDENTIALS';
+  userEmail?: string;
 }
 
 export const PinModal: React.FC<PinModalProps> = ({
@@ -22,16 +24,29 @@ export const PinModal: React.FC<PinModalProps> = ({
   onCancel,
   loading = false,
   error,
+  authPreference,
+  userEmail,
 }) => {
   const [pin, setPin] = useState('');
+  const [credPassword, setCredPassword] = useState('');
   const [supportedBiometrics, setSupportedBiometrics] = useState<LocalAuthentication.AuthenticationType[]>([]);
-  const [authMode, setAuthMode] = useState<'PIN' | 'BIOMETRIC'>('PIN');
+  const [authMode, setAuthMode] = useState<'PIN' | 'BIOMETRIC' | 'CREDENTIALS'>('PIN');
   const inputRef = useRef<TextInput>(null);
 
   useEffect(() => {
-    setPin('');
-    setAuthMode('PIN');
-  }, [visible]);
+    if (visible) {
+      setPin('');
+      setCredPassword('');
+      if (authPreference) {
+        setAuthMode(authPreference);
+        if (authPreference === 'BIOMETRIC') {
+          handleBiometricAuth();
+        }
+      } else {
+        setAuthMode('PIN');
+      }
+    }
+  }, [visible, authPreference]);
 
   useEffect(() => {
     const checkBiometrics = async () => {
@@ -47,8 +62,10 @@ export const PinModal: React.FC<PinModalProps> = ({
   }, []);
 
   const handleSubmit = () => {
-    if (pin.length === 4) {
-      onAuthSubmit(pin);
+    if (authMode === 'PIN' && pin.length === 4) {
+      onAuthSubmit({ pin });
+    } else if (authMode === 'CREDENTIALS' && credPassword.length > 0) {
+      onAuthSubmit({ email: userEmail, password: credPassword });
     }
   };
 
@@ -67,13 +84,13 @@ export const PinModal: React.FC<PinModalProps> = ({
       });
 
       if (result.success) {
-        onAuthSubmit('BIOMETRIC_SUCCESS');
+        onAuthSubmit({ biometricToken: `bio_verified_${Date.now()}` });
       } else {
-        setAuthMode('PIN');
+        if (!authPreference) setAuthMode('PIN');
       }
     } catch (err) {
       console.warn('Biometric auth error:', err);
-      setAuthMode('PIN');
+      if (!authPreference) setAuthMode('PIN');
     }
   };
 
@@ -106,41 +123,43 @@ export const PinModal: React.FC<PinModalProps> = ({
               </View>
             </View>
 
-            <View style={styles.authOptions}>
-              {hasFaceId && (
+            {!authPreference && (
+              <View style={styles.authOptions}>
+                {hasFaceId && (
+                  <TouchableOpacity 
+                    style={authMode === 'BIOMETRIC' ? styles.authOptionSelected : styles.authOption} 
+                    activeOpacity={0.7}
+                    onPress={handleBiometricAuth}
+                  >
+                    <ScanFace size={18} color={authMode === 'BIOMETRIC' ? Colors.accent : Colors.textSecondary} style={{ marginRight: 6 }} />
+                    <Text style={authMode === 'BIOMETRIC' ? styles.authOptionTextSelected : styles.authOptionText}>Face ID</Text>
+                  </TouchableOpacity>
+                )}
+                {hasFingerprint && !hasFaceId && (
+                  <TouchableOpacity 
+                    style={authMode === 'BIOMETRIC' ? styles.authOptionSelected : styles.authOption} 
+                    activeOpacity={0.7}
+                    onPress={handleBiometricAuth}
+                  >
+                    <Fingerprint size={18} color={authMode === 'BIOMETRIC' ? Colors.accent : Colors.textSecondary} style={{ marginRight: 6 }} />
+                    <Text style={authMode === 'BIOMETRIC' ? styles.authOptionTextSelected : styles.authOptionText}>Biometrics</Text>
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity 
-                  style={authMode === 'BIOMETRIC' ? styles.authOptionSelected : styles.authOption} 
+                  style={authMode === 'PIN' ? styles.authOptionSelected : styles.authOption} 
                   activeOpacity={0.7}
-                  onPress={handleBiometricAuth}
+                  onPress={() => {
+                    setAuthMode('PIN');
+                    setTimeout(() => inputRef.current?.focus(), 100);
+                  }}
                 >
-                  <ScanFace size={18} color={authMode === 'BIOMETRIC' ? Colors.accent : Colors.textSecondary} style={{ marginRight: 6 }} />
-                  <Text style={authMode === 'BIOMETRIC' ? styles.authOptionTextSelected : styles.authOptionText}>Face ID</Text>
+                  <KeyRound size={18} color={authMode === 'PIN' ? Colors.accent : Colors.textSecondary} style={{ marginRight: 6 }} />
+                  <Text style={authMode === 'PIN' ? styles.authOptionTextSelected : styles.authOptionText}>Passcode</Text>
                 </TouchableOpacity>
-              )}
-              {hasFingerprint && !hasFaceId && (
-                <TouchableOpacity 
-                  style={authMode === 'BIOMETRIC' ? styles.authOptionSelected : styles.authOption} 
-                  activeOpacity={0.7}
-                  onPress={handleBiometricAuth}
-                >
-                  <Fingerprint size={18} color={authMode === 'BIOMETRIC' ? Colors.accent : Colors.textSecondary} style={{ marginRight: 6 }} />
-                  <Text style={authMode === 'BIOMETRIC' ? styles.authOptionTextSelected : styles.authOptionText}>Biometrics</Text>
-                </TouchableOpacity>
-              )}
-              <TouchableOpacity 
-                style={authMode === 'PIN' ? styles.authOptionSelected : styles.authOption} 
-                activeOpacity={0.7}
-                onPress={() => {
-                  setAuthMode('PIN');
-                  setTimeout(() => inputRef.current?.focus(), 100);
-                }}
-              >
-                <KeyRound size={18} color={authMode === 'PIN' ? Colors.accent : Colors.textSecondary} style={{ marginRight: 6 }} />
-                <Text style={authMode === 'PIN' ? styles.authOptionTextSelected : styles.authOptionText}>Passcode</Text>
-              </TouchableOpacity>
-            </View>
+              </View>
+            )}
 
-            {authMode === 'PIN' ? (
+            {authMode === 'PIN' && (
               <View style={styles.pinContainer}>
                 <Text style={styles.pinLabel}>Enter 4-digit App Passcode</Text>
                 
@@ -164,10 +183,43 @@ export const PinModal: React.FC<PinModalProps> = ({
                   secureTextEntry={true}
                 />
               </View>
-            ) : (
-              <View style={styles.biometricPromptContainer}>
+            )}
+
+            {authMode === 'BIOMETRIC' && (
+              <TouchableOpacity style={styles.biometricPromptContainer} onPress={handleBiometricAuth}>
                 <ScanFace size={36} color={Colors.accent} style={{ marginBottom: 8 }} />
-                <Text style={styles.biometricPromptText}>Authenticate using Face ID / Biometrics</Text>
+                <Text style={styles.biometricPromptText}>Tap to authenticate using Biometrics</Text>
+              </TouchableOpacity>
+            )}
+
+            {authMode === 'CREDENTIALS' && (
+              <View style={styles.credentialsContainer}>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>Email Address</Text>
+                  <View style={styles.inputWrapper}>
+                    <Mail size={20} color={Colors.textMuted} style={styles.inputIcon} />
+                    <TextInput
+                      style={[styles.input, { color: Colors.textSecondary }]}
+                      value={userEmail}
+                      editable={false}
+                    />
+                  </View>
+                </View>
+
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>Password</Text>
+                  <View style={styles.inputWrapper}>
+                    <Lock size={20} color={Colors.textMuted} style={styles.inputIcon} />
+                    <TextInput
+                      style={styles.input}
+                      value={credPassword}
+                      onChangeText={setCredPassword}
+                      secureTextEntry
+                      placeholder="••••••••"
+                      placeholderTextColor={Colors.textMuted}
+                    />
+                  </View>
+                </View>
               </View>
             )}
 
@@ -188,11 +240,15 @@ export const PinModal: React.FC<PinModalProps> = ({
                 <XCircle size={18} color={Colors.textSecondary} style={{ marginRight: 6 }} />
                 <Text style={styles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
-              {authMode === 'PIN' && (
+              {authMode !== 'BIOMETRIC' && (
                 <TouchableOpacity
-                  style={[styles.button, styles.submitButton, pin.length !== 4 && styles.buttonDisabled]}
+                  style={[
+                    styles.button, 
+                    styles.submitButton, 
+                    ((authMode === 'PIN' && pin.length !== 4) || (authMode === 'CREDENTIALS' && !credPassword)) && styles.buttonDisabled
+                  ]}
                   onPress={handleSubmit}
-                  disabled={loading || pin.length !== 4}
+                  disabled={loading || (authMode === 'PIN' && pin.length !== 4) || (authMode === 'CREDENTIALS' && !credPassword)}
                   activeOpacity={0.8}
                 >
                   {loading ? (
@@ -364,6 +420,37 @@ const styles = StyleSheet.create({
     height: 50,
     opacity: 0,
     zIndex: 10,
+  },
+  credentialsContainer: {
+    marginBottom: Spacing.lg,
+    gap: Spacing.md,
+  },
+  inputGroup: {
+    marginBottom: Spacing.sm,
+  },
+  label: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.xs,
+    fontWeight: Typography.weight.medium,
+  },
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.surfaceAlt,
+    paddingHorizontal: Spacing.md,
+  },
+  inputIcon: {
+    marginRight: Spacing.sm,
+  },
+  input: {
+    flex: 1,
+    paddingVertical: 12,
+    fontSize: 16,
+    color: Colors.textPrimary,
   },
   errorBanner: {
     flexDirection: 'row',

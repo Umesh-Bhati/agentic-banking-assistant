@@ -16,6 +16,45 @@ export async function createActionRoutes(
   const actionService = new ActionService(actionRepo, cardService);
   const authService = new AuthorizationService(actionRepo, supabase);
 
+  // POST /actions/:actionId/select-and-confirm
+  fastify.post('/actions/:actionId/select-and-confirm', async (
+    request: FastifyRequest<{ Params: { actionId: string }, Body: { cardId: string } }>,
+    reply: FastifyReply
+  ) => {
+    try {
+      const { actionId } = request.params;
+      const userId = request.customerId || request.userId;
+      const { cardId } = request.body || {};
+
+      if (!cardId) {
+        return reply.code(400).send({ error: 'Card ID is required.' });
+      }
+
+      // Step 1: Select the card
+      await actionService.selectCardForBlock(actionId, cardId, userId);
+
+      // Step 2: Confirm → moves to PENDING_AUTHORIZATION
+      const action = await actionService.confirmAction(actionId, userId);
+
+      // Step 3: Fetch user's configured auth preference
+      const { data: profile } = await supabase
+        .from('customer_profiles')
+        .select('auth_preference')
+        .eq('id', userId)
+        .single();
+
+      return reply.send({
+        success: true,
+        action,
+        authPreference: profile?.auth_preference || 'PIN',
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Unknown error';
+      const statusCode = msg.includes('not found') ? 404 : msg.includes('Unauthorized') ? 403 : 400;
+      return reply.code(statusCode).send({ error: msg });
+    }
+  });
+
   fastify.post('/actions/:actionId/confirm', async (
     request: FastifyRequest<{ Params: { actionId: string }, Body: { userId?: string, cardId?: string } }>, 
     reply: FastifyReply

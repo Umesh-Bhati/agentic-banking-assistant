@@ -5,6 +5,7 @@ import { createChatRoute } from './routes/chat.js';
 import { createActionRoutes } from './routes/action.routes.js';
 import { createStatementRoute } from './routes/statements.js';
 import { createAuthRoutes } from './routes/auth.routes.js';
+import { createProfileRoutes } from './routes/profile.routes.js';
 import authPlugin from './plugins/auth.plugin.js';
 
 config();
@@ -50,6 +51,8 @@ export async function createServer(): Promise<FastifyInstance> {
       supabaseUrl,
       supabaseServiceKey,
     });
+
+    await createProfileRoutes(server, { supabaseUrl, supabaseServiceKey });
 
     await createActionRoutes(server, {
       supabaseUrl,

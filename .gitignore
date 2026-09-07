@@ -7,3 +7,5 @@ dist/
 .env.local
 /apps/backend/.env
 mastra.db*
+supabase/.temp/
+supabase/.branches/

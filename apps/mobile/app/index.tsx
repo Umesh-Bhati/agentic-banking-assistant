@@ -41,6 +41,7 @@ function ChatRuntimeWrapper({ sessionId }: { sessionId: string }) {
 export default function MainScreen() {
   const { 
     isLoggedIn, 
+    userProfile,
     sessionId, 
     messages, 
     isSessionLoading, 
@@ -69,6 +70,8 @@ export default function MainScreen() {
       <ChatRuntimeWrapper key={`${sessionId}-${messages.length}`} sessionId={sessionId} />
       <PinModal
         visible={showPinModal}
+        authPreference={userProfile?.auth_preference as any}
+        userEmail={userProfile?.email}
         cardType={pinModalData?.cardType || 'Card'}
         last4={pinModalData?.last4 || '****'}
         onAuthSubmit={handlePinSubmit}

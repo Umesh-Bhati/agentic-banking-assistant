@@ -6,7 +6,7 @@ export const generateStatementTool = createTool({
   id: 'generate-statement',
   description: 'Generate an account statement for a given date range.',
   inputSchema: z.object({
-    accountId: z.string().optional().describe('The account ID to generate a statement for'),
+    accountId: z.string().describe('The account/product ID selected by the user to generate a statement for'),
     fromDate: z.string().describe('The start date in YYYY-MM-DD format'),
     toDate: z.string().describe('The end date in YYYY-MM-DD format'),
     feeAccepted: z.boolean().describe('Whether the user has explicitly accepted the 25 AED fee'),
@@ -24,9 +24,10 @@ export const generateStatementTool = createTool({
 
     try {
       const supabase = getSharedSupabaseClient();
-      const userId = requestContext?.get('userId') as string || 'b1eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
+      const userId = requestContext?.get('userId') as string;
+      if (!userId) throw new Error('Authentication required: no user context available.');
 
-      if (!resolvedAccountId || resolvedAccountId === 'acc-demo') {
+      if (!resolvedAccountId) {
         const { data: accounts } = await supabase
           .from('bank_accounts')
           .select('id, account_number, type')
@@ -37,7 +38,7 @@ export const generateStatementTool = createTool({
           resolvedAccountId = primaryAccount.id;
           resolvedAccountNumber = primaryAccount.account_number;
         } else {
-          resolvedAccountId = 'c1eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
+          throw new Error('No bank accounts found for this user.');
         }
       } else {
         const { data: acc } = await supabase
@@ -49,9 +50,9 @@ export const generateStatementTool = createTool({
           resolvedAccountNumber = acc.account_number;
         }
       }
-    } catch (err) {
-      if (!resolvedAccountId || resolvedAccountId === 'acc-demo') {
-        resolvedAccountId = 'c1eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
+    } catch (err: any) {
+      if (!resolvedAccountId) {
+        throw new Error(err.message || 'Failed to resolve account for statement generation.');
       }
     }
 

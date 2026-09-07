@@ -27,3 +27,17 @@ export interface Transaction {
   merchant_name?: string;
   created_at: string;
 }
+
+export type AuthPreference = 'PIN' | 'BIOMETRIC' | 'CREDENTIALS';
+
+export interface CustomerProfile {
+  id: string;
+  user_id: string;
+  full_name: string;
+  email: string;
+  phone: string;
+  kyc_status: string;
+  auth_preference: AuthPreference;
+  created_at: string;
+  updated_at: string;
+}

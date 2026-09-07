@@ -8,7 +8,7 @@ alter table customer_profiles
 -- Seed default PIN '1234' for John Doe demo user
 update customer_profiles 
 set pin_hash = crypt('1234', gen_salt('bf')) 
-where email = 'john.doe@almasraf.ae';
+where email = 'john.doe@gmail.com';
 
 -- Secure RPC function to check PIN hash without exposing hash to client
 create or replace function verify_customer_pin(

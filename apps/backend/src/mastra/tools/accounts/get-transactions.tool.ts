@@ -15,7 +15,8 @@ export const getTransactionsTool = createTool({
   execute: async ({ accountId, limit = 7, fromDate, toDate }, { requestContext }: any) => {
     const supabase = getSharedSupabaseClient();
     const accountService = new AccountService(supabase);
-    const userId = requestContext?.get('userId') as string || 'b1eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
+    const userId = requestContext?.get('userId') as string;
+    if (!userId) throw new Error('Authentication required: no user context available.');
 
     try {
       const transactions = await accountService.getTransactions(userId, accountId, limit, fromDate, toDate);

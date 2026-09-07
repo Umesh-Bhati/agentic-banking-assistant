@@ -16,7 +16,8 @@ export const initiateCardBlockTool = createTool({
     const actionService = new ActionService(actionRepo, cardService);
     
     // Default demo user ID
-    const userId = requestContext?.get('userId') as string || 'b1eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
+    const userId = requestContext?.get('userId') as string;
+    if (!userId) throw new Error('Authentication required: no user context available.');
     
     const action = await actionService.createBlockCardAction(userId);
     const cards = await cardService.getUserCards(userId);

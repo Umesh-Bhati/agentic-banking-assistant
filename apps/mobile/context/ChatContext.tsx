@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useRef, useCallb
 import * as SecureStore from 'expo-secure-store';
 import * as LocalAuthentication from 'expo-local-authentication';
 import Constants from 'expo-constants';
-import type { StatementCardData } from '@boit/shared-types';
+import type { StatementCardData, CustomerProfile, AuthPreference } from '@boit/shared-types';
 import { FlatList, AppState, AppStateStatus } from 'react-native';
 import { useLocalRuntime } from '@assistant-ui/react-native';
 import type { ChatModelAdapter, AssistantRuntime } from '@assistant-ui/react-native';
@@ -59,6 +59,10 @@ interface ChatContextType {
   handleLogin: () => void;
   handleBiometricAuth: () => void;
   handleLogout: () => void;
+  userProfile: CustomerProfile | null;
+  fetchProfile: (tokenOverride?: string) => Promise<void>;
+  updateAuthPreference: (pref: string) => Promise<void>;
+  handleSignup: (signupData: { email: string; password: string; fullName: string; phone: string; authPreference: string; pin?: string }) => Promise<void>;
   
   sessionId: string;
   sessions: ChatSession[];
@@ -92,8 +96,9 @@ const ChatContext = createContext<ChatContextType | undefined>(undefined);
 
 export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [email, setEmail] = useState('john.doe@gmail.com');
-  const [password, setPassword] = useState('demo1234');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [userProfile, setUserProfile] = useState<CustomerProfile | null>(null);
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState<string | undefined>();
   const [authToken, setAuthToken] = useState<string | null>(null);
@@ -116,6 +121,25 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
   const appState = useRef(AppState.currentState);
 
+  const fetchProfile = async (tokenOverride?: string) => {
+    try {
+      const activeToken = tokenOverride || authToken;
+      if (!activeToken) return;
+      const res = await fetch(`${API_BASE_URL}/api/profile`, {
+        headers: {
+          'Authorization': `Bearer ${activeToken}`,
+          'ngrok-skip-browser-warning': 'true',
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setUserProfile(data);
+      }
+    } catch (e) {
+      console.warn('Failed to fetch profile:', e);
+    }
+  };
+
   const triggerBiometricUnlock = useCallback(async (token: string) => {
     try {
       const result = await LocalAuthentication.authenticateAsync({
@@ -126,6 +150,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         setAuthToken(token);
         setIsLoggedIn(true);
         fetchSessions(token);
+        fetchProfile(token);
         return true;
       } else {
         setIsLoggedIn(false);
@@ -157,6 +182,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
             setAuthToken(storedToken);
             setIsLoggedIn(true);
             fetchSessions(storedToken);
+            fetchProfile(storedToken);
           }
         }
       } catch (e) {
@@ -372,6 +398,59 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const updateAuthPreference = async (pref: string) => {
+    try {
+      if (!authToken) return;
+      const res = await fetch(`${API_BASE_URL}/api/profile/preferences`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`,
+          'ngrok-skip-browser-warning': 'true',
+        },
+        body: JSON.stringify({ authPreference: pref }),
+      });
+      if (res.ok) {
+        await fetchProfile();
+      }
+    } catch (e) {
+      console.warn('Failed to update auth preference:', e);
+    }
+  };
+
+  const handleSignup = async (signupData: { email: string; password: string; fullName: string; phone: string; authPreference: string; pin?: string }) => {
+    setLoginLoading(true);
+    setLoginError(undefined);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/auth/signup`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'ngrok-skip-browser-warning': 'true',
+        },
+        body: JSON.stringify(signupData),
+      });
+      const data = await res.json();
+      if (res.ok && data.success && data.token) {
+        const token = data.token;
+        await SecureStore.setItemAsync(AUTH_TOKEN_KEY, token);
+        await SecureStore.setItemAsync(LOGGED_IN_KEY, 'true');
+        setAuthToken(token);
+        setIsLoggedIn(true);
+        setPassword('');
+        await fetchSessions(token);
+        await fetchProfile(token);
+      } else {
+        setLoginError(data.error || 'Signup failed.');
+      }
+    } catch (e) {
+      setLoginError('Unable to connect to the server.');
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) {
       setLoginError('Please enter your Email Address and Password.');
@@ -410,6 +489,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         setIsLoggedIn(true);
         setPassword('');
         fetchSessions(token);
+        fetchProfile(token);
       } else {
         setLoginError(data.error || 'Invalid email or password. Please try again.');
       }
@@ -431,6 +511,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     setAuthToken(null);
     setMessages([]);
     setSessions([]);
+    setUserProfile(null);
     setSessionId(generateUUID());
   };
 
@@ -575,12 +656,13 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     }));
   };
 
-  const handlePinSubmit = async (pin: string) => {
+  const handlePinSubmit = async (pinData: string | { pin?: string; biometricToken?: string; email?: string; password?: string }) => {
     setPinLoading(true);
     setPinError(undefined);
 
     try {
-      const isBiometric = pin === 'BIOMETRIC_SUCCESS' || pin.startsWith('bio_');
+      const isString = typeof pinData === 'string';
+      const isBiometric = isString ? (pinData === 'BIOMETRIC_SUCCESS' || pinData.startsWith('bio_')) : !!pinData.biometricToken;
       const targetActionId = (pinModalData as any)?.actionId || 'act_demo';
       const headers: Record<string, string> = { 
         'Content-Type': 'application/json',
@@ -590,14 +672,19 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         headers['Authorization'] = `Bearer ${authToken}`;
       }
 
+      let payload = {};
+      if (isBiometric) {
+        payload = { biometricToken: isString ? `bio_verified_${Date.now()}` : pinData.biometricToken };
+      } else if (!isString && pinData.password) {
+        payload = { email: pinData.email, password: pinData.password };
+      } else {
+        payload = { pin: isString ? pinData : pinData.pin };
+      }
+
       const response = await fetch(`${API_BASE_URL}/actions/${targetActionId}/authorize`, {
         method: 'POST',
         headers,
-        body: JSON.stringify(
-          isBiometric 
-            ? { biometricToken: `bio_verified_${Date.now()}` } 
-            : { pin }
-        ),
+        body: JSON.stringify(payload),
       });
 
       const data = await response.json();
@@ -644,6 +731,10 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         handleLogin,
         handleBiometricAuth,
         handleLogout,
+        userProfile,
+        fetchProfile,
+        updateAuthPreference,
+        handleSignup,
         sessionId,
         sessions,
         isSessionsLoading,

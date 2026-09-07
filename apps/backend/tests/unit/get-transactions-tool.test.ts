@@ -8,7 +8,7 @@ vi.mock('../../src/lib/shared-supabase.js', () => ({
         return {
           select: vi.fn().mockReturnThis(),
           eq: vi.fn().mockResolvedValue({
-            data: [{ id: 'c1eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', type: 'CURRENT' }],
+            data: [{ id: 'acc-001', type: 'CURRENT' }],
             error: null,
           }),
         };
@@ -41,20 +41,38 @@ vi.mock('../../src/lib/shared-supabase.js', () => ({
   })),
 }));
 
+// Helper to create a mock requestContext with userId
+const createMockContext = (userId: string) => ({
+  requestContext: {
+    get: (key: string) => key === 'userId' ? userId : undefined,
+  },
+});
+
 describe('getTransactionsTool Unit Tests', () => {
-  it('should fetch recent transactions without requiring fees or statement generation', async () => {
-    const result = await getTransactionsTool.execute({ limit: 5 }, {} as any);
+  it('should fetch recent transactions with authenticated user context', async () => {
+    const result = await getTransactionsTool.execute(
+      { limit: 5, accountId: 'acc-001' },
+      createMockContext('customer-001') as any,
+    );
 
     expect(result.success).toBe(true);
     expect(result.count).toBe(1);
     expect(result.transactions[0].description).toBe('Supermarket');
   });
 
-  it('should default to limit 7 for max last 7 days transactions', async () => {
-    const result = await getTransactionsTool.execute({}, {} as any);
+  it('should default to limit 7 with authenticated user context', async () => {
+    const result = await getTransactionsTool.execute(
+      { accountId: 'acc-001' },
+      createMockContext('customer-001') as any,
+    );
 
     expect(result.success).toBe(true);
     expect(result.count).toBe(1);
   });
-});
 
+  it('should throw when no user context is available', async () => {
+    await expect(
+      getTransactionsTool.execute({}, { requestContext: { get: () => undefined } } as any)
+    ).rejects.toThrow('Authentication required');
+  });
+});

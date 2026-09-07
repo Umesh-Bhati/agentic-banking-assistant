@@ -3,6 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator,
 import { Landmark, Mail, Lock, Eye, EyeOff, AlertCircle, ScanFace, LogIn } from 'lucide-react-native';
 import { Colors, Spacing, BorderRadius, Shadows, Typography } from '../../../constants/theme';
 import { useChat } from '../../../context/ChatContext';
+import { SignupScreen } from './SignupScreen';
 
 export function LoginScreen() {
   const { 
@@ -18,6 +19,11 @@ export function LoginScreen() {
   } = useChat();
 
   const [showPassword, setShowPassword] = useState(false);
+  const [showSignup, setShowSignup] = useState(false);
+
+  if (showSignup) {
+    return <SignupScreen onBackToLogin={() => setShowSignup(false)} />;
+  }
 
   return (
     <KeyboardAvoidingView 
@@ -98,6 +104,10 @@ export function LoginScreen() {
                 <Text style={styles.loginButtonText}>Log In to Mobile Banking</Text>
               </View>
             )}
+          </TouchableOpacity>
+
+          <TouchableOpacity style={{ alignItems: 'center', marginTop: Spacing.md }} onPress={() => setShowSignup(true)}>
+            <Text style={{ color: Colors.accent, fontSize: 14, fontWeight: Typography.weight.semibold }}>Don't have an account? Sign Up</Text>
           </TouchableOpacity>
 
           {canUseBiometrics && handleBiometricAuth ? (

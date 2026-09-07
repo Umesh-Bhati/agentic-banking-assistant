@@ -20,3 +20,10 @@ export interface PendingAction {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface AuthCredentials {
+  pin?: string;
+  biometricToken?: string;
+  email?: string;
+  password?: string;
+}
