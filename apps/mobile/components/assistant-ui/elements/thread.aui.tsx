@@ -1,11 +1,14 @@
+import { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
+  Keyboard,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useChatScroll } from "../../../features/chat/components/useChatScroll";
 import { MessageBubble } from "./message";
 import { Composer } from "./composer";
 import { AuiIf, ThreadPrimitive } from "@assistant-ui/react-native";
@@ -59,6 +62,7 @@ function EmptyState() {
 }
 
 function ChatMessages() {
+  const scroll = useChatScroll();
   return (
     <>
       <AuiIf condition={(s) => s.thread.isEmpty}>
@@ -66,6 +70,13 @@ function ChatMessages() {
       </AuiIf>
       <AuiIf condition={(s) => !s.thread.isEmpty}>
         <ThreadPrimitive.MessagesFlatList
+          {...scroll}
+          autoScroll={false}
+          scrollToBottomOnInitialize={false}
+          scrollToBottomOnRunStart={false}
+          scrollToBottomOnThreadSwitch={false}
+          scrollEventThrottle={16}
+          removeClippedSubviews={false}
           style={styles.flex}
           contentContainerStyle={styles.messageList}
           showsVerticalScrollIndicator={false}
@@ -83,21 +94,30 @@ export function Thread() {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
 
-  // Offset iOS by 90px (comfortable spacing above keyboard)
-  // Offset Android by 80px (accounts for status bar + navigation drawer header)
-  const keyboardOffset = Platform.OS === 'ios' ? 90 : 80;
+  const containerRef = useRef<View>(null);
+  const [keyboardOffset, setKeyboardOffset] = useState(0);
+  const [keyboardVisible, setKeyboardVisible] = useState(Keyboard.isVisible());
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
+    return () => { show.remove(); hide.remove(); };
+  }, []);
+  const measureOffset = () => {
+    containerRef.current?.measureInWindow((_x, y) => setKeyboardOffset(y));
+  };
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
+    <View ref={containerRef} onLayout={measureOffset} collapsable={false} style={[styles.container, { backgroundColor: colors.background }]}>
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior="padding"
+        enabled={Platform.OS !== "web"}
         keyboardVerticalOffset={keyboardOffset}
       >
         <View style={styles.flex}>
           <ChatMessages />
         </View>
-        <View style={{ paddingBottom: Platform.OS === 'ios' ? Math.max(insets.bottom, 8) : 8 }}>
+        <View style={{ paddingBottom: keyboardVisible ? 8 : Math.max(insets.bottom, 8) }}>
           <Composer />
         </View>
       </KeyboardAvoidingView>
