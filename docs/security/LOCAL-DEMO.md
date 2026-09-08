@@ -21,7 +21,7 @@ docker exec -i supabase_db_boit-security-demo psql -U postgres -d postgres \
 
 Normal restarts do not require seeding. Do not rerun the seed to repair an error: it deletes fixture identities and existing action/audit references may prevent cleanup.
 
-For real AI chat, set a valid approved `OPENAI_API_KEY` in ignored `apps/backend/.env` locally. Never send keys in messages or include them in a video. The helper enables only OpenAI for this synthetic demo and leaves AI disabled for missing/placeholder keys. No alternate provider is used.
+For real AI chat, set a valid approved `OPENROUTER_API_KEY` in ignored `apps/backend/.env` locally. Never send keys in messages or include them in a video. The helper enables OpenRouter with the existing `OPENROUTER_MODEL` (default `openrouter/openai/gpt-4o-mini`) for this synthetic demo and leaves AI disabled for missing/placeholder keys. No automatic provider fallback is used. Optional direct OpenAI embeddings remain disabled unless separately approved; approved knowledge search uses a lexical query otherwise.
 
 ```sh
 node scripts/prepare-local-demo.mjs
@@ -61,7 +61,8 @@ To deliberately discard **all this demo's** data, first confirm `project_id = "b
 - Actual statement quote returned 25 AED; consent, TOTP challenge and authorization completed the action. A repeated authorization returned the same completed action. Authenticated download returned a valid PDF.
 - Database verification found exactly one issued statement and a single debit from 45000.00 to 44975.00 AED after retry. The real banking service created a separate card proposal; actual HTTP selection, confirmation, TOTP challenge and authorization completed it, and the database card status was `BLOCKED`. All three recording customer's cards were still active after these tests. Card proposal testing invoked the banking service directly because AI was unavailable; it does not count as a successful AI tool-call test.
 - Backend source/test typechecks and all 65 backend tests passed after the streaming and authentication-availability fixes. These are separate from the actual Auth/banking HTTP checks above.
-- The original OpenAI configuration was a placeholder and the actual provider rejected it. Streaming regression tests now verify error/empty streams yield an error event without false success or provider diagnostic leakage. AI recording remains dependent on a valid key.
+- A prior direct OpenAI configuration used a placeholder and was rejected. The user uses OpenRouter; chat now preserves that provider and its configured model. Streaming regression tests verify error/empty streams yield an error event without false success or provider diagnostic leakage.
+- After restoring OpenRouter, one real harmless greeting through the existing key and `openrouter/openai/gpt-4o-mini` streamed 366 text characters and a final `done` event. No banking operation was requested. Backend readiness passed, and the provider configuration, knowledge boundary and chat regressions passed (10 focused tests plus backend source/test typechecks).
 
 Public signup restrictions were applied by normally stopping and starting only the isolated demo stack, preserving its data. Live verification returned HTTP 422 `signup_disabled` for direct Supabase signup, HTTP 200 for existing fixture login, and HTTP 200 with one approved MFA factor. Keep global `[auth].enable_signup=false` and `[auth.email].enable_signup=true`: with CLI 2.117.0, the latter controls the email provider itself; setting it false also disables existing email/password login. The global setting blocks registration. No database reset or reseed was performed.
 

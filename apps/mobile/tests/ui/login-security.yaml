@@ -14,8 +14,8 @@ appId: ae.almasraf.mobile
     timeout: 20000
 - tapOn: Profile menu
 - tapOn: Preferences
-- assertVisible: Banking security
-- assertVisible: Authenticator verified successfully.
+- assertVisible: Authorization method
+- assertVisible: Save authorization preference
 - takeScreenshot: verified-authenticator
 - tapOn: Close
 - assertVisible: Al Masraf Assistant

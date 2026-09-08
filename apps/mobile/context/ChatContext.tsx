@@ -10,6 +10,7 @@ import { restoreSession, saveSession, clearSession, type Session } from '../feat
 import { streamChat } from '../features/chat/services/stream';
 import { chatRunError } from '../features/chat/services/run-error';
 import { clearStatementFiles } from '../features/statements/services/download';
+import { isBankingBiometricPromptActive, signBankingChallenge } from '../features/auth/services/biometric-signing';
 import { actions } from '../features/actions/services/actions';
 import { parseUiEvent } from '../features/chat/services/ui-events';
 import { restoreBankingMessages, type Message, type MessageBankingUi } from '../features/chat/services/message-events';
@@ -91,6 +92,7 @@ function useBankingState() {
     onUnauthorized(token => { if (liveSession.current?.token === token) void expireSession(); });
     void unlock();
     const subscription = AppState.addEventListener('change', state => {
+      if (state === 'inactive' && isBankingBiometricPromptActive()) return;
       if (state !== 'active') {
         resetPrivateState(); liveSession.current = null; setSession(null); setIsLoggedIn(false);
       }
@@ -173,12 +175,21 @@ function useBankingState() {
     },
   }), [authToken, sessionId]);
   const beginAuthorization = (prompt: AuthorizationPrompt) => { if (!authToken || liveSession.current?.token !== authToken) return; setPinModalData(prompt); setPinError(undefined); };
-  const handlePinSubmit = async (code: string, factorId: string) => {
+  const handlePinSubmit = async (code: string, factorId: string, method: 'PIN' | 'BIOMETRIC' | 'TOTP') => {
     if (!authToken || !pinModalData) return;
     const epoch = generation.current; setPinLoading(true); setPinError(undefined);
     try {
       const challenge = await actions.challenge(authToken, pinModalData.actionId, factorId);
-      const result = await actions.authorize(authToken, pinModalData.actionId, challenge.challengeId, code);
+      let credentials: { code?: string; pin?: string; signature?: string };
+      if (method === 'BIOMETRIC') {
+        if (challenge.method !== 'BIOMETRIC' || !challenge.publicKey || !challenge.payload || !userProfile) throw new Error('Authorization preference changed. Reopen this operation.');
+        credentials = { signature: await signBankingChallenge(userProfile.id, challenge.publicKey, challenge.payload) };
+      } else {
+        if (method === 'PIN' && challenge.method !== 'PIN') throw new Error('Authorization preference changed. Reopen this operation.');
+        credentials = method === 'PIN' ? { pin: code } : { code };
+      }
+      if (epoch !== generation.current) return;
+      const result = await actions.authorize(authToken, pinModalData.actionId, challenge.challengeId, credentials);
       if (epoch !== generation.current) return;
       if (result.token && result.refreshToken && result.expiresAt) await applySession({ token: result.token, refreshToken: result.refreshToken, expiresAt: result.expiresAt });
       if (result.action.status !== 'COMPLETED') throw new Error('The operation is not complete. Check its status before retrying.');

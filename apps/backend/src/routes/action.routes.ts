@@ -5,6 +5,7 @@ import { ActionRepository } from '../repositories/action.repository.js';
 import { ActionService } from '../services/actions/action.service.js';
 import { AuthorizationService, AuthorizationCommitError } from '../services/actions/authorization.service.js';
 import { CardService } from '../services/banking/card.service.js';
+import { PreferenceAuthorizationService } from '../services/actions/preference-authorization.service.js';
 import { clientOptions } from '../lib/shared-supabase.js';
 type ActionParams = {
     actionId: string;
@@ -44,9 +45,11 @@ export async function createActionRoutes(fastify: FastifyInstance, config: {
     fastify.post<{
         Params: ActionParams;
         Body: {
-            factorId: string;
+            factorId?: string;
         };
     }>('/actions/:actionId/challenge', async (request) => {
+        const settings = await new PreferenceAuthorizationService(admin, repository).settings(request.principal);
+        if (settings.method !== 'TOTP') return new PreferenceAuthorizationService(admin, repository).challenge(request.params.actionId, request.principal);
         if (!request.body?.factorId)
             throw new Error('Factor required');
         return new AuthorizationService(repository, admin).challenge(request.params.actionId, request.principal, request.body.factorId, request.database);
@@ -62,7 +65,7 @@ export async function createActionRoutes(fastify: FastifyInstance, config: {
             if (request.body?.cardId)
                 await actions.selectCardForBlock(request.params.actionId, request.body.cardId, request.customerId);
             const action = await actions.confirmAction(request.params.actionId, request.customerId);
-            return { success: true, action, authPreference: 'TOTP' };
+            return { success: true, action };
         });
     }
     fastify.post<{
@@ -72,12 +75,13 @@ export async function createActionRoutes(fastify: FastifyInstance, config: {
             code?: string;
             pin?: string;
             biometricToken?: string;
+            signature?: string;
             password?: string;
         };
     }>('/actions/:actionId/authorize', async (request) => {
         const credentials = request.body || {};
-        if (credentials.pin || credentials.biometricToken || credentials.password || !credentials.challengeId || !/^\d{6}$/.test(credentials.code || '')) {
-            throw new Error('Server-verified TOTP required');
+        if (credentials.biometricToken || credentials.password || !credentials.challengeId || !(/^\d{6}$/.test(credentials.code || '') || /^\d{6}$/.test(credentials.pin || '') || /^[0-9a-f]{128}$/.test(credentials.signature || ''))) {
+            throw new Error('Server-verified PIN, biometric signature or TOTP challenge required');
         }
         const actions = service(request);
         const current = await actions.owned(request.params.actionId, request.customerId);
@@ -89,7 +93,11 @@ export async function createActionRoutes(fastify: FastifyInstance, config: {
         const authorization = new AuthorizationService(repository, admin);
         let verified;
         try {
-            verified = await authorization.authorizeAction(current.id, request.customerId, credentials, request.principal, request.database);
+            const preferences = new PreferenceAuthorizationService(admin, repository);
+            const settings = await preferences.settings(request.principal);
+            verified = settings.method === 'TOTP'
+                ? await authorization.authorizeAction(current.id, request.customerId, credentials, request.principal, request.database)
+                : await preferences.authorize(current.id, request.principal, { ...credentials, challengeId: credentials.challengeId! });
         } catch (error) {
             if (error instanceof AuthorizationCommitError) {
                 return {success:false,action:current,executionResult:{success:false,message:'Check action status before retrying.'},...error.session};

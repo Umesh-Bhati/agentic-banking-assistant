@@ -7,6 +7,7 @@ for migration in supabase/migrations/*.sql; do
   psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$migration"
 done
 psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/security.sql
+psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/authorization-preferences.sql
 psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/concurrency.sql
 # Two independent sessions hold/compete for the same quote row lock.
 psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL' &

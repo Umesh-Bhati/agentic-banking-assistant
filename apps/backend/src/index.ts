@@ -9,6 +9,7 @@ import { createAuthRoutes } from './routes/auth.routes.js';
 import { createProfileRoutes } from './routes/profile.routes.js';
 import authPlugin from './plugins/auth.plugin.js';
 import { getSharedSupabaseClient } from './lib/shared-supabase.js';
+import { aiConfiguration } from './lib/ai-config.js';
 export async function createServer(): Promise<FastifyInstance> {
     if (process.env.BANKING_MODE !== 'simulator')
         throw new Error('Only explicit simulator mode is supported');
@@ -18,9 +19,7 @@ export async function createServer(): Promise<FastifyInstance> {
             throw new Error('Missing configuration: ' + key);
     if (process.env.NODE_ENV === 'production' && !process.env.SUPABASE_URL!.startsWith('https://'))
         throw new Error('Production requires HTTPS');
-    if (!/^openai\/[a-zA-Z0-9.-]+$/.test(process.env.AI_MODEL || 'openai/gpt-4o-mini')) throw new Error('Approved AI model required');
-    if (process.env.AI_ENABLED === 'true' && (!process.env.OPENAI_API_KEY || process.env.APPROVED_AI_PROVIDERS !== 'openai' || !/^openai\/[a-zA-Z0-9.-]+$/.test(process.env.AI_MODEL || 'openai/gpt-4o-mini')))
-        throw new Error('Approved AI provider configuration required');
+    aiConfiguration();
     const server = fastify({ bodyLimit: 16384, requestTimeout: 35000, logger: { redact: ['req.headers.authorization', 'req.body', 'res.headers["set-cookie"]'], serializers: { req: req => ({ method: req.method, url: req.url?.split('?')[0], id: req.id }) } } });
     server.setErrorHandler((error, request, reply) => {
         const err = error as {

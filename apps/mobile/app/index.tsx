@@ -3,6 +3,7 @@ import { AssistantRuntimeProvider, useLocalRuntime, type ThreadMessageLike } fro
 import { useChat } from '../context/ChatContext';
 import { Thread } from '../components/assistant-ui/elements/thread.aui';
 import { PinModal } from '../features/auth/components/PinModal';
+import { PreferencesScreen } from '../features/profile/components/PreferencesScreen';
 import { LoginScreen } from '../features/auth/components/LoginScreen';
 function ChatRuntimeWrapper() {
   const { chatModelAdapter, messages } = useChat();
@@ -11,8 +12,10 @@ function ChatRuntimeWrapper() {
   return <AssistantRuntimeProvider runtime={runtime}><Thread /></AssistantRuntimeProvider>;
 }
 export default function MainScreen() {
-  const { isLoggedIn, isSessionLoading, sessionId, showPinModal, pinModalData, pinLoading, pinError, handlePinSubmit, handlePinCancel } = useChat();
+  const { isLoggedIn, userProfile, handleLogout, isSessionLoading, sessionId, showPinModal, pinModalData, pinLoading, pinError, handlePinSubmit, handlePinCancel } = useChat();
   if (!isLoggedIn) return <LoginScreen />;
+  if (!userProfile) return <ActivityIndicator />;
+  if (!userProfile.authorization_configured) return <PreferencesScreen visible required onClose={handleLogout} />;
   if (isSessionLoading) return <ActivityIndicator />;
   return <View style={{ flex: 1, backgroundColor: 'white' }}>
     <ChatRuntimeWrapper key={sessionId} />

@@ -1,105 +1,147 @@
 # Agentic Banking Assistant
 
-**Agentic Banking Assistant** is a full-stack FinTech application designed to demonstrate the power of deeply integrated AI in secure environments. Unlike standard chatbots, this assistant uses agentic tool-calling to securely interact with a backend database on behalf of the authenticated user. It can seamlessly answer contextual questions, retrieve real-time account balances, fetch transaction histories, and dynamically generate authenticated PDF statements—all through a natural conversational interface.
+A banking assistant built with **Expo / React Native**, **Fastify**, **Mastra**, **OpenRouter**, and **Supabase**. Supports account queries, card blocking, and PDF statement downloads using synthetic local banking data.
 
----
+## Prerequisites
 
-## 🚀 Key Features
+- Node.js 22+ and pnpm 9.15.0
+- Docker Desktop, running before starting Supabase
+- An OpenRouter API key
+- Xcode for iOS Simulator, or Android Studio for Android Emulator
 
-* **Agentic Tool-Calling:** The AI assistant uses the Mastra framework to securely invoke internal banking API tools based on conversational context.
-* **Contextual Identity:** The bot is securely aware of the logged-in user's identity, preventing data leakage and ensuring personalized service.
-* **Smart Transaction Viewing:** Users can query recent activity seamlessly through chat without navigating complex banking UIs.
-* **Dynamic PDF Generation:** Need an official bank statement? The AI will verify the user's accounts, ensure they accept the service fee, and then dynamically generate and serve a secure PDF statement.
-* **Card Management:** Provides secure flows to select and block compromised debit or credit cards.
-* **Full-Stack Monorepo:** Structured using `pnpm` workspaces for clean separation between the backend (Fastify), frontend (Expo/React Native), and shared types.
+## 1. Install dependencies
 
----
+Clone the repository and open its directory, then run:
 
-## 🛠️ Tech Stack
-
-### Backend
-* **Server:** Node.js with [Fastify](https://fastify.dev/)
-* **AI Agent Framework:** [Mastra](https://mastra.ai/) (powered by OpenRouter/OpenAI)
-* **Database & Auth:** [Supabase](https://supabase.com/) (PostgreSQL + JWT Auth)
-* **PDF Generation:** PDFKit
-
-### Frontend
-* **Mobile App:** [Expo](https://expo.dev/) & React Native
-* **Navigation:** Expo Router
-* **UI Components:** Lucide Icons, Assistant-UI
-
----
-
-## 🏗️ Project Structure
-
-This project uses a monorepo structure managed by `pnpm`.
-
-```text
-├── apps/
-│   ├── backend/           # Fastify server, Mastra AI Agent, and API routes
-│   └── mobile/            # Expo React Native mobile application
-├── packages/
-│   ├── shared-types/      # TypeScript definitions shared between backend/mobile
-│   └── ...
-├── supabase/
-│   └── seed.sql           # Database schema and mock transaction data
+```sh
+pnpm install --frozen-lockfile
+pnpm build:contracts
 ```
 
----
+These instructions match the `security/banking-agent-hardening` branch.
 
-## 🚦 Getting Started
+## 2. Set up Supabase locally
 
-### Prerequisites
-* [Node.js](https://nodejs.org/) (v22+)
-* [pnpm](https://pnpm.io/)
-* [Supabase CLI](https://supabase.com/docs/guides/cli) (if running the database locally)
+From the repository root:
 
-### Installation
+```sh
+pnpm dlx supabase@2.117.0 start
+```
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/Umesh-Bhati/agentic-banking-assistant.git
-   cd agentic-banking-assistant
-   ```
+This starts the Docker services and applies migrations on a fresh database. The project's local Supabase API runs on **55321**, and Studio is available at **http://127.0.0.1:55323**.
 
-2. **Install dependencies:**
-   ```bash
-   pnpm install
-   ```
+Seed the synthetic users and banking records **once, on a fresh database**:
 
-3. **Database Setup:**
-   Ensure you have your Supabase environment running and seeded:
-   ```bash
-   supabase start
-   # This will automatically run supabase/seed.sql to populate mock users (e.g. Umesh, Priyank)
-   ```
+```sh
+docker exec -i supabase_db_boit-security-demo psql -U postgres -d postgres \
+  -v ON_ERROR_STOP=1 -c 'SET app.allow_demo_seed=true' -f - < supabase/seed.sql
+```
 
-4. **Environment Variables:**
-   Create a `.env` file in the `apps/backend` directory based on the configuration (Supabase URLs, OpenAI/OpenRouter keys).
+Automatic seeding is disabled. Do not seed again when restarting; the seed replaces fixture identities.
 
-### Running the Project
+When updating an existing checkout, apply new migrations without reseeding:
 
-**1. Start the Backend:**
-```bash
+```sh
+pnpm dlx supabase@2.117.0 migration up --local
+```
+
+Get the local API keys for the next step:
+
+```sh
+pnpm dlx supabase@2.117.0 status -o env
+```
+
+## 3. Configure the backend
+
+Create `apps/backend/.env` with the following values. Copy `ANON_KEY` and `SERVICE_ROLE_KEY` from the Supabase status output into the corresponding settings:
+
+```dotenv
+SUPABASE_URL=http://127.0.0.1:55321
+SUPABASE_ANON_KEY=your_local_anon_key
+SUPABASE_SERVICE_KEY=your_local_service_role_key
+BANKING_MODE=simulator
+BANKING_MUTATIONS_ENABLED=true
+AI_ENABLED=true
+APPROVED_AI_PROVIDERS=openrouter
+OPENROUTER_API_KEY=your_openrouter_api_key
+OPENROUTER_MODEL=openrouter/openai/gpt-4o-mini
+PORT=3000
+```
+
+Chat uses **OpenRouter**; a direct OpenAI API key is not required. Keep API keys in the backend environment file and out of Git.
+
+Start the backend:
+
+```sh
 cd apps/backend
 pnpm dev
 ```
-*The Fastify server will start on port 3000.*
 
-**2. Start the Mobile App:**
-```bash
-cd apps/mobile
-pnpm start
+Leave it running. The backend is available at **http://localhost:3000**; `/ready` returns `{"status":"ready"}` when its readiness checks pass.
+
+## 4. Run the Expo mobile app
+
+Create `apps/mobile/.env`:
+
+```dotenv
+EXPO_PUBLIC_API_URL=http://127.0.0.1:3000
 ```
-*Use the Expo Go app on your phone, or run an iOS/Android simulator to view the app.*
 
----
+Use `http://10.0.2.2:3000` for Android Emulator. For a physical phone, use your computer's LAN IP instead of `127.0.0.1`, and connect both devices to the same network. Never put backend secrets in this file.
 
-## 🛡️ Security & Privacy
-This project showcases how to implement AI safely in a FinTech context:
-- **No Hallucinated Data:** The agent uses tools mapped directly to authenticated backend SQL queries.
-- **Strict Authorization:** Tools like `generateStatementTool` and the backend PDF generation routes strictly verify that `product.customer_id === request.customerId`. 
-- **Prompt Guardrails:** The LLM system prompt is strictly instructed to refuse queries about third-party individuals, ensuring data privacy even if the user tries to trick the AI.
+In a new terminal, from the repository root:
 
----
+```sh
+cd apps/mobile
+pnpm expo run:ios
+```
 
+Or, for Android:
+
+```sh
+cd apps/mobile
+pnpm expo run:android
+```
+
+These commands build and install the native app and start Metro. Use this native build for the banking security features; Expo Go is not the supported setup.
+
+Once the app is installed, start Metro for subsequent development sessions and open the installed app:
+
+```sh
+cd apps/mobile
+pnpm expo start
+```
+
+Restart Metro after changing `.env`. Rebuild the native app after changing native dependencies.
+
+## Local login and banking flows
+
+Use a seeded synthetic account, for example **`priyank@gmail.com` / `priyank123`**. Public signup is disabled.
+
+After login, users without an authorization preference are taken to setup. Choose **Banking PIN**, **Biometrics**, or **Authenticator code (TOTP)** and complete enrollment before entering chat. Confirm changes with your account password. You can change the method later under **Profile → Preferences**.
+
+Banking PIN uses six digits you choose. Biometrics requires an enrolled Face ID or fingerprint on this device. TOTP requires adding the displayed setup key to an authenticator app and verifying its current code. An already enrolled TOTP account requires its existing authenticator, or you can choose PIN / biometrics instead.
+
+- **Block card:** ask “Block my card,” select the card in the response, and authorize using your saved method.
+- **Download statement:** request an account statement with explicit dates within the last year, review and accept the fee, authorize, then select **Save / share PDF**.
+
+Card blocks and statement fees persist in the local database. Banking operations use your saved authorization method. PIN attempts are limited; biometric approvals require a server-verified device signature.
+
+## Stop and restart
+
+Stop the backend and Metro with `Ctrl+C`. To stop Supabase while preserving its data, run from the repository root:
+
+```sh
+pnpm dlx supabase@2.117.0 stop
+```
+
+Next time, open Docker Desktop, run `pnpm dlx supabase@2.117.0 start`, start the backend with `pnpm dev`, and start mobile with `pnpm expo start`. **No reseeding is needed.**
+
+## Checks
+
+From the repository root:
+
+```sh
+pnpm typecheck
+pnpm test
+```

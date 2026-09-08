@@ -5,6 +5,8 @@ They do not mock authentication, MFA, or model responses. Use synthetic accounts
 only. Enroll the fixture's authenticator through the normal API before recording;
 never record its setup key or terminal credentials.
 
+The login flow assumes the fixture has already completed authorization setup in Preferences. First-login setup is a separate manual step.
+
 Start the isolated backend, then run Metro using its actual port:
 
 ```sh

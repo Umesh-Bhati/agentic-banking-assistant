@@ -24,7 +24,7 @@ export interface Transaction {
     merchant_name?: string;
     created_at: string;
 }
-export type AuthPreference = 'TOTP';
+export type AuthPreference = 'PIN' | 'BIOMETRIC' | 'TOTP';
 export interface CustomerProfile {
     id: string;
     user_id: string;
@@ -33,6 +33,7 @@ export interface CustomerProfile {
     phone: string;
     kyc_status: string;
     auth_preference: AuthPreference;
+    authorization_configured: boolean;
     created_at: string;
     updated_at: string;
 }

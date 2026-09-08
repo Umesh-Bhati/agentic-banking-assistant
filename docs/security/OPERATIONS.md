@@ -38,3 +38,13 @@ The synthetic seed requires `app.allow_demo_seed=true` set explicitly in its dat
 ## Remaining external release gates
 
 Hosted Supabase grants and Auth configuration, durable log export, backup recovery timing, key management, approved model routing and data retention, actual device secure storage behavior, and production traffic limits need deployment evidence. Passing local tests is not banking certification.
+
+## Authorization preferences (migration 014)
+
+New or previously unconfigured customers must finish authorization setup after login before the mobile chat opens. A database default of TOTP alone does not count as enrollment. Preferences offers PIN, biometrics, and TOTP; changes require a freshly verified account password. Existing accounts are not automatically given a PIN or device key.
+
+PINs are six digits, salted with bcrypt (cost 12), and verified inside a transaction that binds the challenge to the customer, session, action version, and preference version. Five incorrect PIN attempts lock PIN authorization for 15 minutes. Changing the preference invalidates outstanding challenges.
+
+Biometric authorization uses an Ed25519 signing key stored with Expo SecureStore `requireAuthentication` and device-only iOS accessibility. The backend verifies a signature over its own short-lived, one-use challenge. A boolean biometric-success flag is never accepted. This implementation protects the key with native biometric storage but performs signing in JavaScript; it does not claim a non-exportable Secure Enclave key or hardware attestation. Biometric enrollment changes can invalidate the stored key; re-enroll through password-confirmed Preferences. Actual device biometric behavior still needs physical-device verification.
+
+Apply `pnpm dlx supabase@2.117.0 migration up --local` against the configured local stack; no reset or seed is required. The first-login setup lets existing test accounts choose PIN without removing their previously enrolled TOTP factors.

@@ -11,7 +11,7 @@ export const searchProductKnowledgeTool = createTool({
     inputSchema: z.object({ query: z.string().max(1000) }),
     execute: async ({ query }, { requestContext }: any) => {
         const context = toolContext(requestContext);
-        if (process.env.AI_ENABLED !== 'true' || process.env.APPROVED_AI_PROVIDERS !== 'openai')
+        if (process.env.AI_ENABLED !== 'true')
             throw new Error('Approved provider processing required');
         const safe = minimizeText(query);
         const database = getSharedSupabaseClient();
@@ -23,6 +23,8 @@ export const searchProductKnowledgeTool = createTool({
         const timer = setTimeout(abort, 2500);
         let results: any[] | null = null;
         try {
+            if (process.env.APPROVED_EMBEDDING_PROVIDER !== 'openai' || !process.env.OPENAI_API_KEY)
+                throw new Error('Optional embeddings are not enabled');
             const provider = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
             const { embeddings } = await embedMany({
                 model: provider.embedding('text-embedding-3-small'),
