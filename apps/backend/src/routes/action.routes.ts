@@ -1,119 +1,117 @@
-import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { FastifyInstance, FastifyRequest } from 'fastify';
+import { createClient } from '@supabase/supabase-js';
+import { ActionState, PendingAction } from '@boit/shared-types';
 import { ActionRepository } from '../repositories/action.repository.js';
 import { ActionService } from '../services/actions/action.service.js';
-import { AuthorizationService } from '../services/actions/authorization.service.js';
+import { AuthorizationService, AuthorizationCommitError } from '../services/actions/authorization.service.js';
 import { CardService } from '../services/banking/card.service.js';
-
-export async function createActionRoutes(
-  fastify: FastifyInstance, 
-  config: { supabaseUrl: string; supabaseServiceKey: string; }
-) {
-  const { createClient } = await import('@supabase/supabase-js');
-  const supabase = createClient(config.supabaseUrl, config.supabaseServiceKey);
-  
-  const actionRepo = new ActionRepository(supabase);
-  const cardService = new CardService(supabase);
-  const actionService = new ActionService(actionRepo, cardService);
-  const authService = new AuthorizationService(actionRepo, supabase);
-
-  // POST /actions/:actionId/select-and-confirm
-  fastify.post('/actions/:actionId/select-and-confirm', async (
-    request: FastifyRequest<{ Params: { actionId: string }, Body: { cardId: string } }>,
-    reply: FastifyReply
-  ) => {
-    try {
-      const { actionId } = request.params;
-      const userId = request.customerId || request.userId;
-      const { cardId } = request.body || {};
-
-      if (!cardId) {
-        return reply.code(400).send({ error: 'Card ID is required.' });
-      }
-
-      // Step 1: Select the card
-      await actionService.selectCardForBlock(actionId, cardId, userId);
-
-      // Step 2: Confirm → moves to PENDING_AUTHORIZATION
-      const action = await actionService.confirmAction(actionId, userId);
-
-      // Step 3: Fetch user's configured auth preference
-      const { data: profile } = await supabase
-        .from('customer_profiles')
-        .select('auth_preference')
-        .eq('id', userId)
-        .single();
-
-      return reply.send({
-        success: true,
-        action,
-        authPreference: profile?.auth_preference || 'PIN',
-      });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Unknown error';
-      const statusCode = msg.includes('not found') ? 404 : msg.includes('Unauthorized') ? 403 : 400;
-      return reply.code(statusCode).send({ error: msg });
+import { clientOptions } from '../lib/shared-supabase.js';
+type ActionParams = {
+    actionId: string;
+};
+export async function createActionRoutes(fastify: FastifyInstance, config: {
+    supabaseUrl: string;
+    supabaseServiceKey: string;
+}) {
+    const admin = createClient(config.supabaseUrl, config.supabaseServiceKey, clientOptions);
+    const repository = new ActionRepository(admin);
+    const service = (request: FastifyRequest) => new ActionService(repository, new CardService(request.database));
+    async function execute(request: FastifyRequest, action: PendingAction) {
+        if (action.actionType === 'GENERATE_STATEMENT') {
+            const { data, error } = await admin.rpc('confirm_statement', {
+                p_statement_id: action.metadata?.statementId,
+                p_user_id: request.userId,
+                p_customer_id: request.customerId,
+            });
+            if (error || !data)
+                throw new Error('Statement execution failed');
+            return { success: true, message: 'Statement issued.', statementId: action.metadata?.statementId };
+        }
+        if (action.actionType !== 'BLOCK_CARD')
+            throw new Error('Unsupported operation');
+        return service(request).executeBlockCardAction(action.id, request.customerId);
     }
-  });
-
-  fastify.post('/actions/:actionId/confirm', async (
-    request: FastifyRequest<{ Params: { actionId: string }, Body: { userId?: string, cardId?: string } }>, 
-    reply: FastifyReply
-  ) => {
-    try {
-      const { actionId } = request.params;
-      const userId = request.customerId || request.userId;
-      const cardId = request.body?.cardId;
-
-      let action;
-      if (cardId) {
-        action = await actionService.selectCardForBlock(actionId, cardId, userId);
-      }
-      action = await actionService.confirmAction(actionId, userId);
-      
-      return reply.send({ success: true, action });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Unknown error';
-      const statusCode = msg.includes('not found') ? 404 : msg.includes('Unauthorized') ? 403 : 400;
-      return reply.code(statusCode).send({ error: msg });
+    fastify.get<{
+        Params: ActionParams;
+    }>('/actions/:actionId', async (request) => ({
+        action: await service(request).owned(request.params.actionId, request.customerId),
+    }));
+    fastify.post<{
+        Params: ActionParams;
+    }>('/actions/:actionId/cancel', async (request) => ({
+        action: await service(request).cancelAction(request.params.actionId, request.customerId),
+    }));
+    fastify.post<{
+        Params: ActionParams;
+        Body: {
+            factorId: string;
+        };
+    }>('/actions/:actionId/challenge', async (request) => {
+        if (!request.body?.factorId)
+            throw new Error('Factor required');
+        return new AuthorizationService(repository, admin).challenge(request.params.actionId, request.principal, request.body.factorId, request.database);
+    });
+    for (const path of ['/actions/:actionId/select-and-confirm', '/actions/:actionId/confirm']) {
+        fastify.post<{
+            Params: ActionParams;
+            Body: {
+                cardId?: string;
+            };
+        }>(path, async (request) => {
+            const actions = service(request);
+            if (request.body?.cardId)
+                await actions.selectCardForBlock(request.params.actionId, request.body.cardId, request.customerId);
+            const action = await actions.confirmAction(request.params.actionId, request.customerId);
+            return { success: true, action, authPreference: 'TOTP' };
+        });
     }
-  });
-
-  fastify.post('/actions/:actionId/authorize', async (
-    request: FastifyRequest<{ Params: { actionId: string }, Body: { userId?: string, pin?: string, biometricToken?: string } }>, 
-    reply: FastifyReply
-  ) => {
-    try {
-      const { actionId } = request.params;
-      const userId = request.customerId || request.userId;
-      const { pin, biometricToken } = request.body || {};
-
-      const action = await authService.authorizeAction(actionId, userId, { pin, biometricToken });
-      
-      // Auto-execute if authorized
-      const executionResult = await actionService.executeBlockCardAction(actionId, userId);
-
-      return reply.send({ success: true, action, executionResult });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Unknown error';
-      const statusCode = msg.includes('not found') ? 404 : msg.includes('Unauthorized') ? 403 : 400;
-      return reply.code(statusCode).send({ error: msg });
-    }
-  });
-
-  fastify.post('/actions/:actionId/execute', async (
-    request: FastifyRequest<{ Params: { actionId: string }, Body: { userId?: string } }>, 
-    reply: FastifyReply
-  ) => {
-    try {
-      const { actionId } = request.params;
-      const userId = request.customerId || request.userId;
-      
-      const result = await actionService.executeBlockCardAction(actionId, userId);
-      return reply.send(result);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Unknown error';
-      const statusCode = msg.includes('not found') ? 404 : msg.includes('Unauthorized') ? 403 : 400;
-      return reply.code(statusCode).send({ error: msg });
-    }
-  });
+    fastify.post<{
+        Params: ActionParams;
+        Body: {
+            challengeId?: string;
+            code?: string;
+            pin?: string;
+            biometricToken?: string;
+            password?: string;
+        };
+    }>('/actions/:actionId/authorize', async (request) => {
+        const credentials = request.body || {};
+        if (credentials.pin || credentials.biometricToken || credentials.password || !credentials.challengeId || !/^\d{6}$/.test(credentials.code || '')) {
+            throw new Error('Server-verified TOTP required');
+        }
+        const actions = service(request);
+        const current = await actions.owned(request.params.actionId, request.customerId);
+        // Recover an acknowledged authorization after response loss without reusing a consumed OTP.
+        if (current.status === ActionState.COMPLETED || current.status === ActionState.AUTHORIZED) {
+            const executionResult = await execute(request, current);
+            return { success: true, action: await actions.owned(current.id, request.customerId), executionResult };
+        }
+        const authorization = new AuthorizationService(repository, admin);
+        let verified;
+        try {
+            verified = await authorization.authorizeAction(current.id, request.customerId, credentials, request.principal, request.database);
+        } catch (error) {
+            if (error instanceof AuthorizationCommitError) {
+                return {success:false,action:current,executionResult:{success:false,message:'Check action status before retrying.'},...error.session};
+            }
+            throw error;
+        }
+        const {action, session} = verified;
+        let executionResult;
+        try {
+            executionResult = await execute(request, action);
+        } catch {
+            request.log.warn({event:'banking_execution_unconfirmed',actionType:action.actionType},'Banking execution unconfirmed');
+            // MFA rotated the session even if execution failed. Preserve those tokens and report no success.
+            return {success:false,action,executionResult:{success:false,message:'Check action status before retrying.'},...session};
+        }
+        request.log.info({ event: 'banking_action_completed', actionType: action.actionType }, 'Banking action completed');
+        return { success: true, action: await actions.owned(action.id, request.customerId), executionResult, ...session };
+    });
+    fastify.post<{
+        Params: ActionParams;
+    }>('/actions/:actionId/execute', async (request) => {
+        const action = await service(request).owned(request.params.actionId, request.customerId);
+        return execute(request, action);
+    });
 }

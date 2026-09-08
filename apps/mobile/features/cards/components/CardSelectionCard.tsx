@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { Colors, Spacing, BorderRadius, Typography, Shadows } from '../../../constants/theme';
 import { useChat } from '../../../context/ChatContext';
-import Constants from 'expo-constants';
+import { actions } from '../../actions/services/actions';
 
 interface CardItem {
   id: string;
@@ -16,61 +16,22 @@ interface CardSelectionCardProps {
   cards: CardItem[];
 }
 
-const getApiBaseUrl = () => {
-  if (process.env.EXPO_PUBLIC_API_URL) {
-    return process.env.EXPO_PUBLIC_API_URL;
-  }
-  if (__DEV__) {
-    const debuggerHost = Constants.expoConfig?.hostUri;
-    const localhost = debuggerHost?.split(':')[0] || 'localhost';
-    return `http://${localhost}:3000`;
-  }
-  return 'http://localhost:3000';
-};
-
 export function CardSelectionCard({ actionId, cards }: CardSelectionCardProps) {
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const { authToken, setPinModalData, setShowPinModal } = useChat();
+  const { authToken, beginAuthorization } = useChat();
 
   const handleSelectCard = async (card: CardItem) => {
     setSelectedCardId(card.id);
     setLoadingCardId(card.id);
     setErrorMessage(null);
 
-    const targetActionId = actionId || 'act_demo';
-
     try {
-      const baseUrl = getApiBaseUrl();
-      const headers: Record<string, string> = { 
-        'Content-Type': 'application/json',
-        'ngrok-skip-browser-warning': 'true',
-      };
-      if (authToken) {
-        headers['Authorization'] = `Bearer ${authToken}`;
-      }
-      // Step 1: Execute Confirmation (Transitions PENDING_SELECTION -> PENDING_CONFIRMATION -> PENDING_AUTHORIZATION)
-      const response = await fetch(`${baseUrl}/actions/${targetActionId}/confirm`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ cardId: card.id }),
-      });
-
-      const data = await response.json();
-
-      if (response.ok && data.success) {
-        // Step 1 Succeeded! Set pin modal data & trigger Step 2: Native PinModal popup
-        setPinModalData({
-          actionId: targetActionId,
-          cardId: card.id,
-          cardType: card.type || card.cardType || 'Credit',
-          last4: card.last4,
-        } as any);
-        setShowPinModal(true);
-      } else {
-        setErrorMessage(data.error || 'Failed to confirm card selection.');
-      }
+      if (!authToken || !actionId) throw new Error('Missing authenticated operation');
+      const result = await actions.confirm(authToken, actionId, card.id);
+      if (result.action.status !== 'PENDING_AUTHORIZATION') throw new Error('Card selection was not confirmed');
+      beginAuthorization({ actionId, cardType: card.type || card.cardType || 'Card', last4: card.last4 });
     } catch (e) {
       console.warn('Error confirming card selection:', e);
       setErrorMessage('Network error confirming card selection.');
@@ -86,7 +47,7 @@ export function CardSelectionCard({ actionId, cards }: CardSelectionCardProps) {
 
       <View style={styles.cardList}>
         {cards.map((card, index) => {
-          const uniqueId = card.id || `fallback-id-${index}`;
+          const uniqueId = card.id;
           const isSelected = selectedCardId === uniqueId;
           const isLoading = loadingCardId === uniqueId;
           const cardName = card.type || card.cardType || 'Credit Card';

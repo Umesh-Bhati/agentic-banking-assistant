@@ -1,15 +1,16 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-
-let supabaseClientInstance: SupabaseClient | null = null;
-
+const boundedFetch: typeof fetch = (input, init) => {
+    const signal = AbortSignal.any([AbortSignal.timeout(10000), ...(init?.signal ? [init.signal] : [])]);
+    return fetch(input, {...init, signal});
+};
+export const clientOptions = { global: { fetch: boundedFetch }, auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } };
 export function getSharedSupabaseClient(): SupabaseClient {
-  if (!supabaseClientInstance) {
-    const supabaseUrl = process.env.SUPABASE_URL || 'http://localhost:54321';
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY || 'test-key';
-    
-    supabaseClientInstance = createClient(supabaseUrl, supabaseServiceKey, {
-      auth: { persistSession: false },
-    });
-  }
-  return supabaseClientInstance;
+    const url = process.env.SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_KEY;
+    if (!url || !key)
+        throw new Error('Database configuration is required');
+    return createClient(url, key, clientOptions);
+}
+export function userClient(url: string, key: string, token: string): SupabaseClient {
+    return createClient(url, key, { ...clientOptions, global: { ...clientOptions.global, headers: { Authorization: `Bearer ${token}` } } });
 }

@@ -4,11 +4,25 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build:contracts": "pnpm --filter @boit/shared-types --filter @boit/types build",
+    "typecheck": "pnpm build:contracts && pnpm -r --if-present typecheck",
+    "test": "pnpm build:contracts && pnpm test:dependencies && pnpm -r --if-present test",
+    "test:dependencies": "node --test scripts/test-dependencies.mjs",
+    "test:database": "bash scripts/test-database.sh",
+    "audit:dependencies": "pnpm audit --audit-level=moderate"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "module",
-  "packageManager": "pnpm@9.15.0"
+  "packageManager": "pnpm@9.15.0",
+  "pnpm": {
+    "overrides": {
+      "xcode@3.0.1>uuid": "11.1.1",
+      "query-string@7.1.3>decode-uri-component": "0.5.0"
+    },
+    "patchedDependencies": {
+      "decode-uri-component@0.5.0": "patches/decode-uri-component@0.5.0.patch"
+    }
+  }
 }

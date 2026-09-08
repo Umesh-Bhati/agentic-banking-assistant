@@ -1,113 +1,41 @@
+import { randomUUID } from 'node:crypto';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { ActionState, PendingAction } from '@boit/shared-types';
-
 export class ActionRepository {
-  private static sharedInMemoryActions: Map<string, PendingAction> = new Map();
-
-  constructor(private supabase?: SupabaseClient) {}
-
-  async create(action: Omit<PendingAction, 'id' | 'createdAt' | 'updatedAt'>): Promise<PendingAction> {
-    const id = `act_${Math.random().toString(36).substring(2, 11)}`;
-    const now = new Date().toISOString();
-
-    if (this.supabase) {
-      const { data, error } = await this.supabase
-        .from('pending_actions')
-        .insert({
-          id,
-          user_id: action.userId,
-          customer_id: action.userId,
-          action_type: action.actionType,
-          status: action.status || ActionState.CREATED,
-          metadata: action.metadata || {},
-        })
-        .select()
-        .single();
-
-      if (!error && data) {
-        const mapped = this.mapRow(data);
-        ActionRepository.sharedInMemoryActions.set(id, mapped);
-        return mapped;
-      } else if (error) {
-        console.error('Supabase pending_actions insert error:', error.message);
-      }
+    constructor(readonly supabase?: SupabaseClient) {
     }
-
-    const newAction: PendingAction = {
-      ...action,
-      id,
-      createdAt: now,
-      updatedAt: now,
-    };
-    ActionRepository.sharedInMemoryActions.set(id, newAction);
-    return newAction;
-  }
-
-  async getById(id: string): Promise<PendingAction | null> {
-    if (this.supabase) {
-      const { data, error } = await this.supabase
-        .from('pending_actions')
-        .select('*')
-        .eq('id', id)
-        .single();
-
-      if (!error && data) {
+    private db() {
+        if (!this.supabase)
+            throw new Error('Durable action storage unavailable');
+        return this.supabase;
+    }
+    async create(action: Omit<PendingAction, 'id' | 'createdAt' | 'updatedAt'>): Promise<PendingAction> {
+        if (!action.authUserId || !action.customerId)
+            throw new Error('Authenticated principal required');
+        const { data, error } = await this.db().from('pending_actions').insert({ id: randomUUID(), user_id: action.authUserId, customer_id: action.customerId, action_type: action.actionType, status: action.status, metadata: action.metadata || {}, idempotency_key: randomUUID() }).select().single();
+        if (error || !data)
+            throw new Error('Unable to persist action');
         return this.mapRow(data);
-      }
     }
-    return ActionRepository.sharedInMemoryActions.get(id) || null;
-  }
-
-  async updateStatus(id: string, status: ActionState, metadata?: Record<string, any>): Promise<PendingAction> {
-    const existing = await this.getById(id);
-    if (!existing) {
-      throw new Error(`Action '${id}' not found in database.`);
+    async getById(id: string): Promise<PendingAction | null> {
+        const { data, error } = await this.db().from('pending_actions').select('*').eq('id', id).maybeSingle();
+        if (error)
+            throw new Error('Unable to read action');
+        return data ? this.mapRow(data) : null;
     }
-
-    const mergedMetadata = metadata ? { ...existing.metadata, ...metadata } : existing.metadata;
-
-    if (this.supabase) {
-      const { data, error } = await this.supabase
-        .from('pending_actions')
-        .update({
-          status,
-          metadata: mergedMetadata,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', id)
-        .select()
-        .single();
-
-      if (!error && data) {
-        const mapped = this.mapRow(data);
-        ActionRepository.sharedInMemoryActions.set(id, mapped);
-        return mapped;
-      }
+    async updateStatus(id: string, status: ActionState, metadata?: Record<string, unknown>, expected?: PendingAction): Promise<PendingAction> {
+        const action = expected || await this.getById(id);
+        if (!action)
+            throw new Error('Action not found');
+        return this.rpc('transition_action', { p_action_id: id, p_user_id: action.authUserId, p_customer_id: action.customerId, p_expected_version: action.version, p_status: status, p_metadata: metadata ? { ...action.metadata, ...metadata } : action.metadata || {} });
     }
-
-    const updatedAction: PendingAction = {
-      ...existing,
-      status,
-      metadata: mergedMetadata,
-      updatedAt: new Date().toISOString(),
-    };
-    ActionRepository.sharedInMemoryActions.set(id, updatedAction);
-    return updatedAction;
-  }
-
-  private mapRow(row: any): PendingAction {
-    return {
-      id: row.id,
-      userId: row.customer_id,
-      actionType: row.action_type,
-      status: row.status as ActionState,
-      metadata: {
-        ...row.metadata,
-        authUserId: row.user_id,
-        customerId: row.customer_id,
-      },
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    };
-  }
+    async rpc(name: string, args: Record<string, unknown>): Promise<PendingAction> {
+        const { data, error } = await this.db().rpc(name, args);
+        if (error || !data)
+            throw new Error('Action transition rejected');
+        return this.mapRow(Array.isArray(data) ? data[0] : data);
+    }
+    mapRow(row: any): PendingAction {
+        return { id: row.id, userId: row.customer_id, authUserId: row.user_id, customerId: row.customer_id, version: row.version, expiresAt: row.expires_at, result: row.result, actionType: row.action_type, status: row.status, metadata: row.metadata, createdAt: row.created_at, updatedAt: row.updated_at };
+    }
 }

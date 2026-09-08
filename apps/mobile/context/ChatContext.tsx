@@ -1,793 +1,193 @@
-import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
-import * as SecureStore from 'expo-secure-store';
+import React, { createContext, useContext, useState, useEffect, useRef, useMemo } from 'react';
+import { AppState, Alert } from 'react-native';
+import { randomUUID } from 'expo-crypto';
 import * as LocalAuthentication from 'expo-local-authentication';
-import Constants from 'expo-constants';
-import type { StatementCardData, CustomerProfile, AuthPreference } from '@boit/shared-types';
-import { FlatList, AppState, AppStateStatus } from 'react-native';
-import { useLocalRuntime } from '@assistant-ui/react-native';
-import type { ChatModelAdapter, AssistantRuntime } from '@assistant-ui/react-native';
-
-const LOGGED_IN_KEY = 'almasraf_logged_in';
-const AUTH_TOKEN_KEY = 'almasraf_auth_token';
-
-export interface Message {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  isStreaming?: boolean;
-  statementData?: StatementCardData;
-}
-
-export interface ChatSession {
-  id: string;
-  title?: string;
-  created_at: string;
-  updated_at: string;
-}
-
-const generateUUID = () => {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
-    return v.toString(16);
-  });
-};
-
-const getApiBaseUrl = () => {
-  if (process.env.EXPO_PUBLIC_API_URL) {
-    return process.env.EXPO_PUBLIC_API_URL;
-  }
-  if (__DEV__) {
-    const debuggerHost = Constants.expoConfig?.hostUri;
-    const localhost = debuggerHost?.split(':')[0] || 'localhost';
-    return `http://${localhost}:3000`;
-  }
-  return 'http://localhost:3000';
-};
-
-const API_BASE_URL = getApiBaseUrl();
-
-interface ChatContextType {
-  isLoggedIn: boolean;
-  loginLoading: boolean;
-  loginError?: string;
-  authToken: string | null;
-  canUseBiometrics: boolean;
-  email: string;
-  setEmail: (e: string) => void;
-  password: string;
-  setPassword: (p: string) => void;
-  handleLogin: () => void;
-  handleBiometricAuth: () => void;
-  handleLogout: () => void;
-  userProfile: CustomerProfile | null;
-  fetchProfile: (tokenOverride?: string) => Promise<void>;
-  updateAuthPreference: (pref: string) => Promise<void>;
-  handleSignup: (signupData: { email: string; password: string; fullName: string; phone: string; authPreference: string; pin?: string }) => Promise<void>;
-  
-  sessionId: string;
-  sessions: ChatSession[];
-  isSessionsLoading: boolean;
-  messages: Message[];
-  inputText: string;
-  setInputText: (t: string) => void;
-  isLoading: boolean;
-  isSessionLoading: boolean;
-  
-  showPinModal: boolean;
-  setShowPinModal: (s: boolean) => void;
-  pinModalData: { cardType: string; last4: string } | null;
-  setPinModalData: (d: { cardType: string; last4: string } | null) => void;
-  pinLoading: boolean;
-  pinError: string | undefined;
-  
-  handleNewChat: () => void;
-  fetchSessions: (tokenOverride?: string) => Promise<void>;
-  loadSession: (id: string) => void;
-  deleteSession: (id: string) => void;
-  sendMessage: (overrideText?: string | any) => void;
-  handlePinSubmit: (pin: string) => void;
-  handlePinCancel: () => void;
-  
-  flatListRef: React.RefObject<FlatList<Message> | null>;
-  chatModelAdapter: any;
-  triggerUserMessage?: (text: string) => void;
-  triggerAssistantMessage?: (text: string) => void;
-  setTriggerAssistantMessage?: (fn: (text: string) => void) => void;
-  setTriggerUserMessage?: (fn: (text: string) => void) => void;
-}
-
-const ChatContext = createContext<ChatContextType | undefined>(undefined);
-
-export function ChatProvider({ children }: { children: React.ReactNode }) {
+import type { ChatModelAdapter } from '@assistant-ui/react-native';
+import type { CustomerProfile } from '@boit/shared-types';
+import { json, abortRequests, ApiError, onUnauthorized } from '../lib/api/client';
+import { resourceId } from '../lib/api/policy';
+import { restoreSession, saveSession, clearSession, type Session } from '../features/auth/services/session';
+import { streamChat } from '../features/chat/services/stream';
+import { clearStatementFiles } from '../features/statements/services/download';
+import { actions } from '../features/actions/services/actions';
+import { parseUiEvent, type BankingUi } from '../features/chat/services/ui-events';
+export interface Message { id: string; role: 'user' | 'assistant'; content: string; }
+export interface ChatSession { id: string; title?: string; created_at: string; updated_at: string; }
+export interface AuthorizationPrompt { actionId: string; cardType: string; last4: string; }
+const newId = randomUUID;
+function useBankingState() {
+  const [session, setSession] = useState<Session | null>(null);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [userProfile, setUserProfile] = useState<CustomerProfile | null>(null);
   const [loginLoading, setLoginLoading] = useState(false);
-  const [loginError, setLoginError] = useState<string | undefined>();
-  const [authToken, setAuthToken] = useState<string | null>(null);
+  const [loginError, setLoginError] = useState<string>();
   const [canUseBiometrics, setCanUseBiometrics] = useState(false);
-
-  const [sessionId, setSessionId] = useState<string>(generateUUID());
+  const [sessionId, setSessionId] = useState(newId);
   const [messages, setMessages] = useState<Message[]>([]);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [isSessionsLoading, setIsSessionsLoading] = useState(false);
-  const [triggerUserMessage, setTriggerUserMessage] = useState<((text: string) => void) | undefined>(undefined);
-  const [triggerAssistantMessage, setTriggerAssistantMessage] = useState<((text: string) => void) | undefined>(undefined);
-  
-  const [inputText, setInputText] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
   const [isSessionLoading, setIsSessionLoading] = useState(false);
-  const flatListRef = useRef<FlatList<Message>>(null);
-  
-  const [showPinModal, setShowPinModal] = useState(false);
-  const [pinModalData, setPinModalData] = useState<{ cardType: string; last4: string } | null>(null);
+  const [uiEvents, setUiEvents] = useState<BankingUi[]>([]);
+  const [pinModalData, setPinModalData] = useState<AuthorizationPrompt | null>(null);
   const [pinLoading, setPinLoading] = useState(false);
-  const [pinError, setPinError] = useState<string | undefined>();
-
-  const appState = useRef(AppState.currentState);
-
+  const [pinError, setPinError] = useState<string>();
+  const generation = useRef(0);
+  const liveSession = useRef<Session | null>(null);
+  const streamAbort = useRef<AbortController | null>(null);
+  const authToken = session?.token || null;
+  const resetPrivateState = () => {
+    generation.current += 1; abortRequests(); streamAbort.current?.abort();
+    try { clearStatementFiles(); } catch { /* Retry cleanup on next unlock. */ }
+    setMessages([]); setSessions([]); setUiEvents([]); setUserProfile(null);
+    setPinModalData(null); setPinError(undefined); setPassword(''); setSessionId(newId());
+  };
+  const expireSession = async () => {
+    resetPrivateState(); liveSession.current = null; setSession(null); setIsLoggedIn(false);
+    await clearSession();
+  };
+  const report = (error: unknown) => {
+    if (error instanceof ApiError && error.status === 401) { void expireSession(); return; }
+    Alert.alert('Banking request failed', error instanceof Error ? error.message : 'Please try again.');
+  };
+  const applySession = async (fresh: Session, expectedToken?: string) => {
+    if (expectedToken && liveSession.current?.token !== expectedToken) throw new Error('Session changed; sign in again');
+    const epoch = generation.current;
+    await saveSession(fresh);
+    if (epoch !== generation.current) { await clearSession(); throw new Error('Session changed; sign in again'); }
+    liveSession.current = fresh; setSession(fresh);
+  };
   const fetchProfile = async (tokenOverride?: string) => {
-    try {
-      const activeToken = tokenOverride || authToken;
-      if (!activeToken) return;
-      const res = await fetch(`${API_BASE_URL}/api/profile`, {
-        headers: {
-          'Authorization': `Bearer ${activeToken}`,
-          'ngrok-skip-browser-warning': 'true',
-        }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setUserProfile(data);
-      } else if (res.status === 401) {
-        handleLogout();
-      }
-    } catch (e) {
-      console.warn('Failed to fetch profile:', e);
-    }
+    const token = tokenOverride || liveSession.current?.token; if (!token) return;
+    const epoch = generation.current;
+    const data = await json<CustomerProfile>('/api/profile', token);
+    if (epoch === generation.current) setUserProfile(data);
   };
-
-  const triggerBiometricUnlock = useCallback(async (token: string) => {
-    try {
-      const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: 'Unlock Al Masraf Mobile Banking',
-        fallbackLabel: 'Enter Password',
-      });
-      if (result.success) {
-        setAuthToken(token);
-        setIsLoggedIn(true);
-        fetchSessions(token);
-        fetchProfile(token);
-        return true;
-      } else {
-        setIsLoggedIn(false);
-        return false;
-      }
-    } catch (e) {
-      console.warn('Biometric auth error:', e);
-      setIsLoggedIn(false);
-      return false;
-    }
-  }, []);
-
-  useEffect(() => {
-    const checkAuth = async () => {
-      try {
-        const storedToken = await SecureStore.getItemAsync(AUTH_TOKEN_KEY);
-        const storedLoggedIn = await SecureStore.getItemAsync(LOGGED_IN_KEY);
-        const hasHardware = await LocalAuthentication.hasHardwareAsync();
-        const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-
-        const biometricsAvailable = hasHardware && isEnrolled;
-        setCanUseBiometrics(biometricsAvailable && (!!storedToken || storedLoggedIn === 'true'));
-
-        if (storedLoggedIn === 'true' && storedToken) {
-          if (biometricsAvailable) {
-            // Prompt for biometrics on launch before unlocking!
-            triggerBiometricUnlock(storedToken);
-          } else {
-            setAuthToken(storedToken);
-            setIsLoggedIn(true);
-            fetchSessions(storedToken);
-            fetchProfile(storedToken);
-          }
-        }
-      } catch (e) {
-        console.warn('Failed to read auth from SecureStore:', e);
-      }
-    };
-    checkAuth();
-  }, [triggerBiometricUnlock]);
-
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', async (nextAppState: AppStateStatus) => {
-      if (
-        appState.current.match(/inactive|background/) &&
-        nextAppState === 'active'
-      ) {
-        try {
-          const storedToken = await SecureStore.getItemAsync(AUTH_TOKEN_KEY);
-          const storedLoggedIn = await SecureStore.getItemAsync(LOGGED_IN_KEY);
-          const hasHardware = await LocalAuthentication.hasHardwareAsync();
-          const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-
-          if (storedLoggedIn === 'true' && storedToken && hasHardware && isEnrolled) {
-            setIsLoggedIn(false);
-            triggerBiometricUnlock(storedToken);
-          }
-        } catch (e) {
-          console.warn('Error checking biometrics on app resume:', e);
-        }
-      }
-      appState.current = nextAppState;
-    });
-
-    return () => {
-      subscription.remove();
-    };
-  }, [triggerBiometricUnlock]);
-
-  const chatModelAdapter: ChatModelAdapter = React.useMemo(() => ({
-    async *run(options) {
-      let resolve: ((val: string | null) => void) | null = null;
-      const chunks: (string | null)[] = [];
-      let lastProcessedIndex = 0;
-
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', `${API_BASE_URL}/api/chat`);
-      xhr.setRequestHeader('Content-Type', 'application/json');
-      xhr.setRequestHeader('ngrok-skip-browser-warning', 'true');
-      if (authToken) {
-        xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
-      }
-
-      xhr.onreadystatechange = () => {
-        if (xhr.readyState === 3 || xhr.readyState === 4) {
-          const newData = xhr.responseText.substring(lastProcessedIndex);
-          if (newData) {
-            lastProcessedIndex = xhr.responseText.length;
-            if (resolve) { resolve(newData); resolve = null; } else { chunks.push(newData); }
-          }
-        }
-        if (xhr.readyState === 4) {
-          if (resolve) { resolve(null); resolve = null; } else { chunks.push(null); }
-        }
-      };
-
-      const lastUserMsg = options.messages[options.messages.length - 1];
-      const textContent = lastUserMsg?.content?.find((c: any) => c.type === 'text');
-      const textToSend = textContent ? (textContent as any).text : '';
-
-      xhr.send(JSON.stringify({
-        message: textToSend,
-        sessionId: sessionId,
-      }));
-
-      let buffer = '';
-      let text = '';
-      const toolCalls: any[] = [];
-
-      while (true) {
-        let chunk = chunks.length > 0 ? chunks.shift()! : await new Promise<string | null>(res => { resolve = res; });
-        if (chunk === null) break;
-        
-        buffer += chunk;
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
-            if (data === '[DONE]') continue;
-            try {
-              const parsed = JSON.parse(data);
-              if ((parsed.type === 'text' || parsed.type === 'token') && parsed.content) {
-                text += parsed.content;
-                yield { content: [{ type: 'text', text }, ...toolCalls] };
-              } else if (parsed.type === 'tool_call') {
-                toolCalls.push({ type: 'tool-call', toolName: parsed.toolName, toolCallId: parsed.toolCallId, args: parsed.args || {} });
-                yield { content: [{ type: 'text', text }, ...toolCalls] };
-              } else if (parsed.type === 'tool_result') {
-                const existingIdx = toolCalls.findIndex(t => t.toolCallId === parsed.toolCallId);
-                if (existingIdx !== -1) {
-                  toolCalls[existingIdx] = { ...toolCalls[existingIdx], result: parsed.result || {} };
-                } else {
-                  toolCalls.push({ type: 'tool-call', toolName: parsed.toolName, toolCallId: parsed.toolCallId, args: {}, result: parsed.result || {} });
-                }
-                yield { content: [{ type: 'text', text }, ...toolCalls] };
-              } else if (parsed.type === 'auth_required') {
-                setShowPinModal(true);
-                setPinModalData({ cardType: parsed.suspendData.cardType, last4: parsed.suspendData.last4 });
-              } else if (parsed.type === 'STATEMENT_CARD' && parsed.data) {
-                toolCalls.push({ type: 'tool-call', toolName: 'StatementCard', toolCallId: generateUUID(), args: parsed.data });
-                yield { content: [{ type: 'text', text }, ...toolCalls] };
-              }
-            } catch (e) {}
-          }
-        }
-      }
-      fetchSessions();
-    }
-  }), [sessionId, authToken]);
-
   const fetchSessions = async (tokenOverride?: string) => {
-    setIsSessionsLoading(true);
-    try {
-      const activeToken = tokenOverride || authToken;
-      const headers: Record<string, string> = {
-        'ngrok-skip-browser-warning': 'true',
-      };
-      if (activeToken) {
-        headers['Authorization'] = `Bearer ${activeToken}`;
-      } else {
-        setIsSessionsLoading(false);
-        return;
-      }
-      const res = await fetch(`${API_BASE_URL}/api/chat/sessions`, { headers });
-      if (res.ok) {
-        const data = await res.json();
-        setSessions(data || []);
-      } else if (res.status === 401) {
-        handleLogout();
-      }
-    } catch (e) {
-      console.warn('Failed to fetch sessions:', e);
-    } finally {
-      setIsSessionsLoading(false);
-    }
+    const token = tokenOverride || liveSession.current?.token; if (!token) return;
+    const epoch = generation.current; setIsSessionsLoading(true);
+    try { const data = await json<ChatSession[]>('/api/chat/sessions', token); if (epoch === generation.current) setSessions(data); }
+    catch (error) { if (epoch === generation.current) report(error); }
+    finally { if (epoch === generation.current) setIsSessionsLoading(false); }
   };
-
+  const unlock = async () => {
+    setLoginLoading(true);
+    try {
+      const available = await LocalAuthentication.hasHardwareAsync() && await LocalAuthentication.isEnrolledAsync();
+      setCanUseBiometrics(available);
+      if (!available) return; // Password login required without an enrolled local unlock factor.
+      const result = await LocalAuthentication.authenticateAsync({ promptMessage: 'Unlock banking', disableDeviceFallback: true });
+      if (!result.success) return;
+      const fresh = await restoreSession();
+      if (!fresh) return;
+      await applySession(fresh); await fetchProfile(fresh.token); setIsLoggedIn(true); await fetchSessions(fresh.token);
+    } catch { await expireSession(); }
+    finally { setLoginLoading(false); }
+  };
+  useEffect(() => {
+    onUnauthorized(token => { if (liveSession.current?.token === token) void expireSession(); });
+    void unlock();
+    const subscription = AppState.addEventListener('change', state => {
+      if (state !== 'active') {
+        resetPrivateState(); liveSession.current = null; setSession(null); setIsLoggedIn(false);
+      }
+    });
+    return () => { onUnauthorized(undefined); subscription.remove(); abortRequests(); streamAbort.current?.abort(); };
+  }, []);
+  useEffect(() => {
+    if (!session || !isLoggedIn) return;
+    const epoch = generation.current;
+    const timer = setTimeout(() => {
+      void json<Session>('/api/auth/refresh', null, { refreshToken: session.refreshToken }).then(async fresh => {
+        if (epoch === generation.current && liveSession.current?.token === session.token) await applySession(fresh);
+      }).catch(() => { if (epoch === generation.current) void expireSession(); });
+    }, Math.max(1000, session.expiresAt * 1000 - Date.now() - 60000));
+    return () => clearTimeout(timer);
+  }, [session, isLoggedIn]);
+  const authenticate = async (path: string, credentials: unknown) => {
+    resetPrivateState(); setIsLoggedIn(false); setLoginLoading(true); setLoginError(undefined);
+    try {
+      const epoch = generation.current;
+      const fresh = await json<Session>(path, null, credentials);
+      if (epoch !== generation.current) return;
+      await applySession(fresh); await fetchProfile(fresh.token); setIsLoggedIn(true); setPassword(''); await fetchSessions(fresh.token);
+    } catch (error) { await expireSession(); setLoginError(error instanceof Error ? error.message : 'Authentication failed'); }
+    finally { setLoginLoading(false); }
+  };
+  const handleLogin = () => authenticate('/api/auth/login', { email: email.trim(), password });
+  const handleLogout = async () => {
+    const token = liveSession.current?.token;
+    await expireSession();
+    if (token) { try { await json('/api/auth/logout', token, {}); } catch { Alert.alert('Signed out on this device', 'Server sign-out could not be confirmed. Contact support to revoke other sessions if needed.'); } }
+  };
+  const handleNewChat = () => { streamAbort.current?.abort(); generation.current++; setSessionId(newId()); setMessages([]); setUiEvents([]); setPinModalData(null); };
   const loadSession = async (id: string) => {
-    setSessionId(id);
-    setIsSessionLoading(true);
+    if (!authToken) return; handleNewChat(); const epoch = generation.current; setIsSessionLoading(true);
     try {
-      const headers: Record<string, string> = {
-        'ngrok-skip-browser-warning': 'true',
-      };
-      if (authToken) {
-        headers['Authorization'] = `Bearer ${authToken}`;
-      }
-      const res = await fetch(`${API_BASE_URL}/api/chat/sessions/${id}/messages`, { headers });
-      if (res.ok) {
-        const data = await res.json();
-        const loadedMessages: Message[] = (data || []).map((msg: any) => ({
-          id: msg.id,
-          role: msg.role,
-          content: msg.content,
-          statementData: msg.ui_data?.type === 'STATEMENT_CARD' ? msg.ui_data.data : undefined,
-        }));
-        setMessages(loadedMessages);
-      } else if (res.status === 401) {
-        handleLogout();
-      }
-    } catch (e) {
-      console.warn('Failed to fetch messages:', e);
-    } finally {
-      setIsSessionLoading(false);
-    }
+      const data = await json<Array<Message & { ui_data?: unknown }>>(`/api/chat/sessions/${resourceId(id)}/messages`, authToken);
+      if (epoch !== generation.current) return;
+      setSessionId(id); setMessages(data.map(({ id, role, content }) => ({ id, role, content })));
+      // Old model-authored JSON and legacy ui_data are deliberately never replayed as controls.
+      setUiEvents(data.flatMap(message => { const event = parseUiEvent(message.ui_data); return event ? [event] : []; }));
+    } catch (error) { if (epoch === generation.current) report(error); }
+    finally { if (epoch === generation.current) setIsSessionLoading(false); }
   };
-
-  const handleNewChat = () => {
-    setSessionId(generateUUID());
-    setMessages([]);
-    setIsSessionLoading(false);
-  };
-
   const deleteSession = async (id: string) => {
-    try {
-      const headers: Record<string, string> = {
-        'ngrok-skip-browser-warning': 'true',
-      };
-      if (authToken) {
-        headers['Authorization'] = `Bearer ${authToken}`;
-      }
-      const res = await fetch(`${API_BASE_URL}/api/chat/sessions/${id}`, { method: 'DELETE', headers });
-      if (res.ok) {
-        setSessions(prev => prev.filter(s => s.id !== id));
-        if (id === sessionId) {
-          handleNewChat();
+    if (!authToken) return;
+    try { await json(`/api/chat/sessions/${resourceId(id)}`, authToken, undefined, 'DELETE'); if (id === sessionId) handleNewChat(); await fetchSessions(); } catch (error) { report(error); }
+  };
+  const chatModelAdapter = useMemo<ChatModelAdapter>(() => ({
+    async *run({ messages: outgoing, abortSignal }) {
+      if (!authToken) throw new Error('Sign in before sending a message');
+      const part = outgoing[outgoing.length - 1]?.content.find(part => part.type === 'text');
+      if (!part || part.type !== 'text' || !part.text.trim()) throw new Error('Enter a message');
+      const controller = new AbortController(); streamAbort.current?.abort(); streamAbort.current = controller;
+      const abort = () => controller.abort(); abortSignal.addEventListener('abort', abort, { once: true });
+      if (abortSignal.aborted) controller.abort();
+      const epoch = generation.current; let text = '';
+      try {
+        for await (const raw of streamChat(authToken, sessionId, part.text, controller.signal)) {
+          if (epoch !== generation.current) return;
+          const event = raw as { type: string; content?: string };
+          if (event.type === 'text' && typeof event.content === 'string') { text += event.content; yield { content: [{ type: 'text', text }] }; }
+          const ui = parseUiEvent(raw); if (ui) setUiEvents(previous => [...previous.slice(-19), ui]);
         }
-      } else if (res.status === 401) {
-        handleLogout();
-      }
-    } catch (e) {
-      console.warn('Failed to delete session:', e);
-    }
-  };
-
-  const handleBiometricAuth = async () => {
+        await fetchSessions();
+      } catch (error) { if (error instanceof ApiError && error.status === 401) await expireSession(); throw error; }
+      finally { abortSignal.removeEventListener('abort', abort); controller.abort(); }
+    },
+  }), [authToken, sessionId]);
+  const beginAuthorization = (prompt: AuthorizationPrompt) => { if (!authToken || liveSession.current?.token !== authToken) return; setPinModalData(prompt); setPinError(undefined); };
+  const handlePinSubmit = async (code: string, factorId: string) => {
+    if (!authToken || !pinModalData) return;
+    const epoch = generation.current; setPinLoading(true); setPinError(undefined);
     try {
-      const storedToken = await SecureStore.getItemAsync(AUTH_TOKEN_KEY);
-      if (storedToken) {
-        await triggerBiometricUnlock(storedToken);
-      } else {
-        const result = await LocalAuthentication.authenticateAsync({
-          promptMessage: 'Unlock Al Masraf Mobile Banking',
-          fallbackLabel: 'Enter Password',
-        });
-        if (result.success) {
-          setIsLoggedIn(true);
-        }
-      }
-    } catch (e) {
-      console.warn('Biometric auth error:', e);
-    }
+      const challenge = await actions.challenge(authToken, pinModalData.actionId, factorId);
+      const result = await actions.authorize(authToken, pinModalData.actionId, challenge.challengeId, code);
+      if (epoch !== generation.current) return;
+      if (result.token && result.refreshToken && result.expiresAt) await applySession({ token: result.token, refreshToken: result.refreshToken, expiresAt: result.expiresAt });
+      if (result.action.status !== 'COMPLETED') throw new Error('The operation is not complete. Check its status before retrying.');
+      setUiEvents(events => events.map(event => event.type === 'STATEMENT_QUOTE' && event.data.actionId === result.action.id ? { ...event, data: { ...event.data, status: 'COMPLETED' } } : event));
+      setPinModalData(null); Alert.alert('Operation completed', 'The bank confirmed this operation.');
+    } catch (error) { if (epoch === generation.current) { if (error instanceof ApiError && error.status === 401) await expireSession(); else setPinError(error instanceof Error ? error.message : 'Authorization failed'); } }
+    finally { if (epoch === generation.current) setPinLoading(false); }
   };
-
-  const updateAuthPreference = async (pref: string) => {
-    try {
-      if (!authToken) return;
-      const res = await fetch(`${API_BASE_URL}/api/profile/preferences`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authToken}`,
-          'ngrok-skip-browser-warning': 'true',
-        },
-        body: JSON.stringify({ authPreference: pref }),
-      });
-      if (res.ok) {
-        await fetchProfile();
-      }
-    } catch (e) {
-      console.warn('Failed to update auth preference:', e);
-    }
+  const handlePinCancel = async () => {
+    if (!authToken || !pinModalData) return; setPinLoading(true);
+    try { await actions.cancel(authToken, pinModalData.actionId); setPinModalData(null); setPinError(undefined); }
+    catch (error) { setPinError('Cancellation could not be confirmed. Check status before retrying.'); }
+    finally { setPinLoading(false); }
   };
-
-  const handleSignup = async (signupData: { email: string; password: string; fullName: string; phone: string; authPreference: string; pin?: string }) => {
-    setLoginLoading(true);
-    setLoginError(undefined);
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/auth/signup`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'ngrok-skip-browser-warning': 'true',
-        },
-        body: JSON.stringify(signupData),
-      });
-      const data = await res.json();
-      if (res.ok && data.success && data.token) {
-        const token = data.token;
-        await SecureStore.setItemAsync(AUTH_TOKEN_KEY, token);
-        await SecureStore.setItemAsync(LOGGED_IN_KEY, 'true');
-        setAuthToken(token);
-        setIsLoggedIn(true);
-        setPassword('');
-        await fetchSessions(token);
-        await fetchProfile(token);
-      } else {
-        setLoginError(data.error || 'Signup failed.');
-      }
-    } catch (e) {
-      setLoginError('Unable to connect to the server.');
-    } finally {
-      setLoginLoading(false);
-    }
+  const checkActionStatus = async () => {
+    if (!authToken || !pinModalData) return;
+    try { const result = await actions.status(authToken, pinModalData.actionId); setPinError(`Bank status: ${result.action.status}`); } catch (error) { report(error); }
   };
-
-  const handleLogin = async () => {
-    if (!email.trim() || !password.trim()) {
-      setLoginError('Please enter your Email Address and Password.');
-      return;
-    }
-    setLoginLoading(true);
-    setLoginError(undefined);
-
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-      const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'ngrok-skip-browser-warning': 'true',
-        },
-        body: JSON.stringify({
-          email: email.trim(),
-          password: password.trim(),
-        }),
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      const data = await res.json();
-
-      if (res.ok && data.success && data.token) {
-        const token = data.token;
-        await SecureStore.setItemAsync(AUTH_TOKEN_KEY, token);
-        await SecureStore.setItemAsync(LOGGED_IN_KEY, 'true');
-        setAuthToken(token);
-        setIsLoggedIn(true);
-        setPassword('');
-        fetchSessions(token);
-        fetchProfile(token);
-      } else {
-        setLoginError(data.error || 'Invalid email or password. Please try again.');
-      }
-    } catch (e: any) {
-      if (e.name === 'AbortError') {
-        setLoginError('Authentication request timed out. Please try again.');
-      } else {
-        setLoginError('Unable to connect to the banking server. Please check your network connection.');
-      }
-    } finally {
-      setLoginLoading(false);
-    }
-  };
-
-  const handleLogout = () => {
-    SecureStore.deleteItemAsync(LOGGED_IN_KEY).catch(() => {});
-    SecureStore.deleteItemAsync(AUTH_TOKEN_KEY).catch(() => {});
-    setIsLoggedIn(false);
-    setAuthToken(null);
-    setMessages([]);
-    setSessions([]);
-    setUserProfile(null);
-    setSessionId(generateUUID());
-  };
-
-  const sendMessage = async (overrideText?: string | any) => {
-    const textToSend = typeof overrideText === 'string' ? overrideText : inputText;
-    if (!textToSend.trim() || isLoading) return;
-
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      role: 'user',
-      content: textToSend,
-    };
-
-    const assistantMessage: Message = {
-      id: (Date.now() + 1).toString(),
-      role: 'assistant',
-      content: '',
-      isStreaming: true,
-    };
-
-    setMessages(prev => [...prev, userMessage, assistantMessage]);
-    const currentInput = textToSend;
-    if (typeof overrideText !== 'string') {
-      setInputText('');
-    }
-    setIsLoading(true);
-
-    let assistantContent = '';
-    let buffer = '';
-
-    const handleChunk = (chunkText: string) => {
-      buffer += chunkText;
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      let tokenUpdated = false;
-
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6);
-          if (data === '[DONE]') continue;
-          
-          try {
-            const parsed = JSON.parse(data);
-            if ((parsed.type === 'text' || parsed.type === 'token') && parsed.content) {
-              assistantContent += parsed.content;
-              tokenUpdated = true;
-            } else if (parsed.type === 'done') {
-              setMessages(prev => prev.map(msg => 
-                msg.id === assistantMessage.id 
-                  ? { ...msg, content: assistantContent, isStreaming: false }
-                  : msg
-              ));
-              setIsLoading(false);
-              fetchSessions();
-            } else if (parsed.type === 'error') {
-              throw new Error(parsed.error || 'Unknown error');
-            } else if (parsed.type === 'auth_required') {
-              const authData = parsed;
-              setPinModalData({
-                cardType: authData.suspendData.cardType,
-                last4: authData.suspendData.last4,
-              });
-              setMessages(prev => prev.map(msg => 
-                msg.id === assistantMessage.id 
-                  ? { ...msg, isStreaming: false }
-                  : msg
-              ));
-              setShowPinModal(true);
-              setIsLoading(false);
-            } else if (parsed.type === 'STATEMENT_CARD' && parsed.data) {
-              setMessages(prev => prev.map(msg => 
-                msg.id === assistantMessage.id 
-                  ? { ...msg, statementData: parsed.data }
-                  : msg
-              ));
-            } else if (parsed.type === 'workflow_suspended') {
-              setMessages(prev => prev.map(msg => 
-                msg.id === assistantMessage.id 
-                  ? { ...msg, isStreaming: false }
-                  : msg
-              ));
-              setIsLoading(false);
-            }
-          } catch (e) {
-          }
-        }
-      }
-
-      if (tokenUpdated) {
-        setMessages(prev => prev.map(msg => 
-          msg.id === assistantMessage.id 
-            ? { ...msg, content: assistantContent }
-            : msg
-        ));
-      }
-    };
-
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', `${API_BASE_URL}/api/chat`);
-    xhr.setRequestHeader('Content-Type', 'application/json');
-    xhr.setRequestHeader('ngrok-skip-browser-warning', 'true');
-    if (authToken) {
-      xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
-    }
-
-    let seenBytes = 0;
-
-    xhr.onreadystatechange = () => {
-      if (xhr.readyState === 3 || xhr.readyState === 4) {
-        const newText = xhr.responseText.substring(seenBytes);
-        seenBytes = xhr.responseText.length;
-        if (newText) {
-          handleChunk(newText);
-        }
-      }
-      if (xhr.readyState === 4) {
-        if (xhr.status < 200 || xhr.status >= 300) {
-          setMessages(prev => prev.map(msg => 
-            msg.id === assistantMessage.id 
-              ? { ...msg, content: 'Sorry, I encountered an error. Please try again.', isStreaming: false }
-              : msg
-          ));
-        }
-        setIsLoading(false);
-        fetchSessions();
-      }
-    };
-
-    xhr.onerror = (error) => {
-      setMessages(prev => prev.map(msg => 
-        msg.id === assistantMessage.id 
-          ? { ...msg, content: 'Network error. Please make sure the server is running.', isStreaming: false }
-          : msg
-      ));
-      setIsLoading(false);
-    };
-
-    xhr.send(JSON.stringify({
-      message: currentInput,
-      sessionId: sessionId,
-    }));
-  };
-
-  const handlePinSubmit = async (pinData: string | { pin?: string; biometricToken?: string; email?: string; password?: string }) => {
-    setPinLoading(true);
-    setPinError(undefined);
-
-    try {
-      const isString = typeof pinData === 'string';
-      const isBiometric = isString ? (pinData === 'BIOMETRIC_SUCCESS' || pinData.startsWith('bio_')) : !!pinData.biometricToken;
-      const targetActionId = (pinModalData as any)?.actionId || 'act_demo';
-      const headers: Record<string, string> = { 
-        'Content-Type': 'application/json',
-        'ngrok-skip-browser-warning': 'true',
-      };
-      if (authToken) {
-        headers['Authorization'] = `Bearer ${authToken}`;
-      }
-
-      let payload = {};
-      if (isBiometric) {
-        payload = { biometricToken: isString ? `bio_verified_${Date.now()}` : pinData.biometricToken };
-      } else if (!isString && pinData.password) {
-        payload = { email: pinData.email, password: pinData.password };
-      } else {
-        payload = { pin: isString ? pinData : pinData.pin };
-      }
-
-      const response = await fetch(`${API_BASE_URL}/actions/${targetActionId}/authorize`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(payload),
-      });
-
-      const data = await response.json();
-
-      if (response.ok && (data.success || data.action?.status === 'AUTHORIZED' || data.action?.status === 'COMPLETED')) {
-        const cardType = pinModalData?.cardType || 'Credit';
-        const last4 = pinModalData?.last4 || '****';
-        setShowPinModal(false);
-        setPinModalData(null);
-        if (triggerAssistantMessage) { triggerAssistantMessage(`✅ **Card Block Successful**\n\nYour ${cardType} card ending in **•••• ${last4}** has been blocked.`); } else setMessages(prev => [...prev, {
-          id: Date.now().toString(),
-          role: 'assistant',
-          content: `✅ **Card Block Successful**\n\nYour ${cardType} card ending in **•••• ${last4}** has been blocked.`,
-        }]);
-      } else {
-        setPinError(data.error || 'Authorization failed. Please check your passcode.');
-      }
-    } catch (error) {
-      setPinError('Network error. Please try again.');
-    } finally {
-      setPinLoading(false);
-    }
-  };
-
-  const handlePinCancel = () => {
-    setShowPinModal(false);
-    setPinModalData(null);
-    setPinError(undefined);
-    if (triggerUserMessage) triggerUserMessage('Cancel'); else sendMessage('Cancel');
-  };
-
-  return (
-    <ChatContext.Provider
-      value={{
-        isLoggedIn,
-        loginLoading,
-        loginError,
-        authToken,
-        canUseBiometrics,
-        email,
-        setEmail,
-        password,
-        setPassword,
-        handleLogin,
-        handleBiometricAuth,
-        handleLogout,
-        userProfile,
-        fetchProfile,
-        updateAuthPreference,
-        handleSignup,
-        sessionId,
-        sessions,
-        isSessionsLoading,
-        messages,
-        inputText,
-        setInputText,
-        isLoading,
-        isSessionLoading,
-        showPinModal,
-        setShowPinModal,
-        pinModalData,
-        setPinModalData,
-        pinLoading,
-        pinError,
-        handleNewChat,
-        fetchSessions,
-        loadSession,
-        deleteSession,
-        sendMessage,
-        handlePinSubmit,
-        handlePinCancel,
-        flatListRef,
-        chatModelAdapter,
-        triggerUserMessage,
-        setTriggerUserMessage,
-        triggerAssistantMessage,
-        setTriggerAssistantMessage,
-      }}
-    >
-      {children}
-    </ChatContext.Provider>
-  );
+  return { isLoggedIn, loginLoading, loginError, authToken, canUseBiometrics, email, setEmail, password, setPassword,
+    handleLogin, handleBiometricAuth: unlock, handleLogout, userProfile, fetchProfile, applySession,
+    sessionId, sessions, messages, isSessionsLoading, isSessionLoading, fetchSessions, loadSession, deleteSession, handleNewChat,
+    chatModelAdapter, uiEvents, pinModalData, showPinModal: !!pinModalData, beginAuthorization, pinLoading, pinError, handlePinSubmit, handlePinCancel, checkActionStatus };
 }
-
-export const useChat = () => {
-  const context = useContext(ChatContext);
-  if (!context) throw new Error('useChat must be used within a ChatProvider');
-  return context;
-};
+const ChatContext = createContext<ReturnType<typeof useBankingState> | undefined>(undefined);
+export function ChatProvider({ children }: { children: React.ReactNode }) { return <ChatContext.Provider value={useBankingState()}>{children}</ChatContext.Provider>; }
+export function useChat() { const value = useContext(ChatContext); if (!value) throw new Error('ChatProvider required'); return value; }

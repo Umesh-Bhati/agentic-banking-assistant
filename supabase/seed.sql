@@ -1,27 +1,16 @@
--- Seed data for 3 demo users: Prashant (PIN), Umesh (BIOMETRIC), Priyank (CREDENTIALS)
+-- Synthetic fixtures; all users require independent TOTP enrollment.
 -- Run after all migrations have been applied
 
--- =============================================
--- Clean existing demo data
--- =============================================
-DELETE FROM transactions WHERE account_id IN (
-  SELECT id FROM bank_accounts WHERE customer_id IN (
-    SELECT id FROM customer_profiles
-  )
-);
-DELETE FROM customer_products WHERE customer_id IN (SELECT id FROM customer_profiles);
-DELETE FROM cards WHERE customer_id IN (SELECT id FROM customer_profiles);
-DELETE FROM bank_accounts WHERE customer_id IN (SELECT id FROM customer_profiles);
-DELETE FROM chat_sessions WHERE user_id IN (SELECT user_id FROM customer_profiles);
-DELETE FROM pending_actions WHERE user_id IN (SELECT user_id FROM customer_profiles);
-DELETE FROM customer_profiles;
-DELETE FROM auth.identities WHERE user_id IN (
-  SELECT id FROM auth.users WHERE email IN ('prashant@gmail.com','umesh@gmail.com','priyank@gmail.com','john.doe@gmail.com')
-);
-DELETE FROM auth.users WHERE email IN ('prashant@gmail.com','umesh@gmail.com','priyank@gmail.com','john.doe@gmail.com');
+-- Explicit local fixture opt-in. Never run against a hosted banking database.
+do $$ begin
+ if current_setting('app.allow_demo_seed',true) is distinct from 'true' then
+  raise exception 'Set app.allow_demo_seed=true only on a disposable local database';
+ end if;
+end $$;
+-- Delete only the three deterministic fixture identities; cascades remove their data.
+DELETE FROM auth.users WHERE id IN ('a1000001-0000-0000-0000-000000000001','a2000002-0000-0000-0000-000000000002','a3000003-0000-0000-0000-000000000003');
 
--- =============================================
--- User 1: Prashant Kumar — PIN auth (PIN: 1234)
+-- User 1: Prashant Kumar — TOTP enrollment required
 -- =============================================
 INSERT INTO auth.users (id, instance_id, email, encrypted_password, email_confirmed_at, created_at, updated_at, raw_app_meta_data, raw_user_meta_data, is_super_admin, role, aud, confirmation_token, recovery_token, email_change_token_new, email_change)
 VALUES ('a1000001-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000000', 'prashant@gmail.com', crypt('prashant123', gen_salt('bf')), now(), now(), now(), '{"provider":"email","providers":["email"]}', '{"full_name":"Prashant Kumar"}', false, 'authenticated', 'authenticated', '', '', '', '')
@@ -32,7 +21,7 @@ VALUES ('a1000001-0000-0000-0000-000000000001', 'a1000001-0000-0000-0000-0000000
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO customer_profiles (id, user_id, full_name, email, phone, kyc_status, auth_preference, pin_hash)
-VALUES ('b1000001-0000-0000-0000-000000000001', 'a1000001-0000-0000-0000-000000000001', 'Prashant Kumar', 'prashant@gmail.com', '+971501111111', 'VERIFIED', 'PIN', crypt('1234', gen_salt('bf')))
+VALUES ('b1000001-0000-0000-0000-000000000001', 'a1000001-0000-0000-0000-000000000001', 'Prashant Kumar', 'prashant@gmail.com', '+971501111111', 'VERIFIED', 'TOTP', null)
 ON CONFLICT (id) DO NOTHING;
 
 -- Prashant's Accounts
@@ -77,7 +66,7 @@ ON CONFLICT (id) DO NOTHING;
 
 
 -- =============================================
--- User 2: Umesh Singh — BIOMETRIC auth (PIN: 5678)
+-- User 2: Umesh Singh — TOTP enrollment required
 -- =============================================
 INSERT INTO auth.users (id, instance_id, email, encrypted_password, email_confirmed_at, created_at, updated_at, raw_app_meta_data, raw_user_meta_data, is_super_admin, role, aud, confirmation_token, recovery_token, email_change_token_new, email_change)
 VALUES ('a2000002-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000000', 'umesh@gmail.com', crypt('umesh123', gen_salt('bf')), now(), now(), now(), '{"provider":"email","providers":["email"]}', '{"full_name":"Umesh Singh"}', false, 'authenticated', 'authenticated', '', '', '', '')
@@ -88,7 +77,7 @@ VALUES ('a2000002-0000-0000-0000-000000000002', 'a2000002-0000-0000-0000-0000000
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO customer_profiles (id, user_id, full_name, email, phone, kyc_status, auth_preference, pin_hash)
-VALUES ('b2000002-0000-0000-0000-000000000002', 'a2000002-0000-0000-0000-000000000002', 'Umesh Singh', 'umesh@gmail.com', '+971502222222', 'VERIFIED', 'BIOMETRIC', crypt('5678', gen_salt('bf')))
+VALUES ('b2000002-0000-0000-0000-000000000002', 'a2000002-0000-0000-0000-000000000002', 'Umesh Singh', 'umesh@gmail.com', '+971502222222', 'VERIFIED', 'TOTP', null)
 ON CONFLICT (id) DO NOTHING;
 
 -- Umesh's Accounts
@@ -132,7 +121,7 @@ ON CONFLICT (id) DO NOTHING;
 
 
 -- =============================================
--- User 3: Priyank Patel — CREDENTIALS auth (PIN: 9012)
+-- User 3: Priyank Patel — TOTP enrollment required
 -- =============================================
 INSERT INTO auth.users (id, instance_id, email, encrypted_password, email_confirmed_at, created_at, updated_at, raw_app_meta_data, raw_user_meta_data, is_super_admin, role, aud, confirmation_token, recovery_token, email_change_token_new, email_change)
 VALUES ('a3000003-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000000', 'priyank@gmail.com', crypt('priyank123', gen_salt('bf')), now(), now(), now(), '{"provider":"email","providers":["email"]}', '{"full_name":"Priyank Patel"}', false, 'authenticated', 'authenticated', '', '', '', '')
@@ -143,7 +132,7 @@ VALUES ('a3000003-0000-0000-0000-000000000003', 'a3000003-0000-0000-0000-0000000
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO customer_profiles (id, user_id, full_name, email, phone, kyc_status, auth_preference, pin_hash)
-VALUES ('b3000003-0000-0000-0000-000000000003', 'a3000003-0000-0000-0000-000000000003', 'Priyank Patel', 'priyank@gmail.com', '+971503333333', 'VERIFIED', 'CREDENTIALS', crypt('9012', gen_salt('bf')))
+VALUES ('b3000003-0000-0000-0000-000000000003', 'a3000003-0000-0000-0000-000000000003', 'Priyank Patel', 'priyank@gmail.com', '+971503333333', 'VERIFIED', 'TOTP', null)
 ON CONFLICT (id) DO NOTHING;
 
 -- Priyank's Accounts

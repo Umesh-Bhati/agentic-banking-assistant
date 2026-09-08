@@ -1,104 +1,57 @@
+import {requireApprovedFactor} from './mfa-registry.service.js';
 import { ActionRepository } from '../../repositories/action.repository.js';
 import { ActionState, PendingAction, AuthCredentials } from '@boit/shared-types';
 import { SupabaseClient } from '@supabase/supabase-js';
-
+import { Principal } from '../../plugins/auth.plugin.js';
 export type { AuthCredentials };
-
+export interface VerifiedSession { token: string; refreshToken: string; expiresAt: number; }
+export class AuthorizationCommitError extends Error {
+    constructor(readonly session: VerifiedSession) { super('Authorization persistence unconfirmed'); }
+}
 export class AuthorizationService {
-  constructor(
-    private actionRepo: ActionRepository,
-    private supabase: SupabaseClient
-  ) {}
-
-  async authorizeAction(
-    actionId: string,
-    userId: string,
-    credentials: AuthCredentials
-  ): Promise<PendingAction> {
-    const action = await this.actionRepo.getById(actionId);
-    if (!action) {
-      throw new Error(`Action '${actionId}' not found in database.`);
+    constructor(private actionRepo: ActionRepository, private supabase: SupabaseClient) {
     }
-
-    // STRICT ownership — NO hardcoded ID bypass
-    const isOwner =
-      action.userId === userId ||
-      action.metadata?.authUserId === userId ||
-      action.metadata?.customerId === userId;
-
-    if (!isOwner) {
-      throw new Error(`Unauthorized: User '${userId}' does not own action '${actionId}'.`);
+    async challenge(actionId: string, principal: Principal, factorId: string, auth: SupabaseClient) {
+        const action = await this.actionRepo.getById(actionId);
+        if (!action || action.customerId !== principal.customerId || action.authUserId !== principal.authUserId || action.status !== ActionState.PENDING_AUTHORIZATION || Date.parse(action.expiresAt || '') <= Date.now())
+            throw new Error('Action unavailable');
+        await requireApprovedFactor(this.supabase,principal,factorId);
+        const { data: factors, error: factorError } = await auth.auth.mfa.listFactors();
+        if (factorError || !factors?.totp.some(f => f.id === factorId))
+            throw new Error('Verified TOTP factor required');
+        const { data, error } = await auth.auth.mfa.challenge({ factorId });
+        if (error || !data)
+            throw new Error('MFA challenge failed');
+        const expiresAt = new Date(Math.min(Date.now() + 300000, Date.parse(action.expiresAt!))).toISOString();
+        const { error: persistError } = await this.supabase.from('action_mfa_challenges').insert({ id: data.id, action_id: actionId, user_id: principal.authUserId, customer_id: principal.customerId, session_id: principal.sessionId, factor_id: factorId, action_version: action.version, expires_at: expiresAt });
+        if (persistError)
+            throw new Error('Unable to persist challenge');
+        return { challengeId: data.id, expiresAt };
     }
-
-    if (action.status !== ActionState.PENDING_AUTHORIZATION) {
-      throw new Error(`Cannot authorize action in state ${action.status}`);
+    async authorizeAction(actionId: string, customerId: string, credentials: AuthCredentials, principal?: Principal, auth?: SupabaseClient): Promise<{
+        action: PendingAction;
+        session: {
+            token: string;
+            refreshToken: string;
+            expiresAt: number;
+        };
+    }> {
+        if (!principal || !auth || !credentials.challengeId || !/^\d{6}$/.test(credentials.code || '') || credentials.pin || credentials.biometricToken || credentials.password)
+            throw new Error('Server-verified TOTP required');
+        const { data: challenge, error } = await this.supabase.from('action_mfa_challenges').select('*').eq('id', credentials.challengeId).eq('action_id', actionId).eq('customer_id', customerId).eq('user_id', principal.authUserId).eq('session_id', principal.sessionId).single();
+        if (error || !challenge || challenge.consumed_at || Date.parse(challenge.expires_at) <= Date.now())
+            throw new Error('Challenge unavailable');
+        await requireApprovedFactor(this.supabase,principal,challenge.factor_id);
+        const { data: verified, error: verifyError } = await auth.auth.mfa.verify({ factorId: challenge.factor_id, challengeId: challenge.id, code: credentials.code! });
+        if (verifyError || !verified || verified.user.id !== principal.authUserId)
+            throw new Error('MFA verification failed');
+        const session = { token: verified.access_token, refreshToken: verified.refresh_token, expiresAt: Math.floor(Date.now() / 1000) + verified.expires_in };
+        try {
+            const action = await this.actionRepo.rpc('authorize_action', { p_action_id: actionId, p_user_id: principal.authUserId, p_customer_id: customerId, p_session_id: principal.sessionId, p_challenge_id: challenge.id });
+            return { action, session };
+        } catch {
+            // The identity provider may rotate tokens before the database rejects a stale action version.
+            throw new AuthorizationCommitError(session);
+        }
     }
-
-    // Route to correct auth method
-    if (credentials.biometricToken) {
-      return this.authorizeBiometric(actionId);
-    }
-    if (credentials.email && credentials.password) {
-      return this.authorizeCredentials(actionId, credentials.email, credentials.password);
-    }
-    if (credentials.pin) {
-      return this.authorizePin(actionId, userId, credentials.pin);
-    }
-
-    throw new Error('No valid credentials provided for authorization.');
-  }
-
-  private async authorizePin(actionId: string, userId: string, pin: string): Promise<PendingAction> {
-    if (!/^\d{4}$/.test(pin)) {
-      throw new Error('Invalid PIN format. Must be a 4-digit numeric passcode.');
-    }
-
-    if (this.supabase) {
-      const { data: isValid, error } = await this.supabase.rpc('verify_customer_pin', {
-        p_customer_id: userId,
-        p_pin: pin,
-      });
-
-      if (error) {
-        console.warn('RPC verify_customer_pin failed:', error.message);
-      } else if (!isValid) {
-        throw new Error('Incorrect PIN. Authorization failed.');
-      }
-    }
-
-    return this.actionRepo.updateStatus(actionId, ActionState.AUTHORIZED, {
-      authMethod: 'PIN',
-      authorizedAt: new Date().toISOString(),
-    });
-  }
-
-  private async authorizeBiometric(actionId: string): Promise<PendingAction> {
-    // Biometric validation happens on-device via expo-local-authentication.
-    // The mobile app only sends the token after successful device-level auth.
-    return this.actionRepo.updateStatus(actionId, ActionState.AUTHORIZED, {
-      authMethod: 'BIOMETRIC',
-      authorizedAt: new Date().toISOString(),
-    });
-  }
-
-  private async authorizeCredentials(
-    actionId: string,
-    email: string,
-    password: string
-  ): Promise<PendingAction> {
-    // Re-authenticate against Supabase Auth — ephemeral, not stored
-    const { error } = await this.supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
-    if (error) {
-      throw new Error('Invalid credentials. Authorization failed.');
-    }
-
-    return this.actionRepo.updateStatus(actionId, ActionState.AUTHORIZED, {
-      authMethod: 'CREDENTIALS',
-      authorizedAt: new Date().toISOString(),
-    });
-  }
 }

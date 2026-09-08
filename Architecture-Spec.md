@@ -69,3 +69,9 @@ Since this is a greenfield project, we have structured the architecture to expos
 ## Further Notes
 
 - By implementing Tools in Mastra (e.g., `fetch_user_cards()`), we strictly prevent the LLM from hallucinating account data, acting exactly like an enterprise middleware layer. The LLM simply translates intent to Tool Calls, and formatting to text. Tool logic executes securely on the backend against Postgres.
+
+## Security authority (supersedes earlier workflow and authorization descriptions)
+
+Mastra is a replaceable proposal-generation adapter. Banking state and authorization are owned by deterministic services and PostgreSQL transactions, not Mastra persistent workflows. Distinct authentication-user and customer IDs form the request principal. TOTP challenges are verified by Supabase and consumed once against the bound action version and session. Legacy PIN, biometric-token, and model-provided fee acceptance paths are retired.
+
+Database migrations 009–013 revoke customer mutation privileges, establish durable action/challenge/revocation/audit and statement records, and restrict approved knowledge publication. Statement confirmation charges the simulator's 25 AED fee once and snapshots its transaction rows. Knowledge ingestion uses a separate staging-only principal. See [security operations](docs/security/OPERATIONS.md) and [threat model](docs/security/THREAT-MODEL.md) for trust boundaries, migration ordering, evidence, and production gates.

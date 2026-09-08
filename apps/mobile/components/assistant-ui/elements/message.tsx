@@ -12,7 +12,7 @@ import { useTheme } from "../../../hooks/use-theme";
 import { Radius } from "../../../constants/theme";
 import { MessageActionBar } from "./message-action-bar";
 import { MessageBranchPicker } from "./message-branch-picker";
-import { StatementCardToolUI } from "./tools";
+
 
 const UserText: TextMessagePartComponent = ({ text }) => {
   const { colors } = useTheme();
@@ -82,7 +82,7 @@ function MessageImageAttachment() {
 
   const imageContent = attachment.content?.find((c: any) => c.type === "image");
   const uri = (imageContent as any)?.image;
-  if (!uri) return null;
+  if (typeof uri !== "string" || !/^(file:|content:|blob:)/.test(uri)) return null;
 
   return (
     <Image
@@ -119,7 +119,7 @@ function AssistantMessage() {
         <MessagePrimitive.Parts
           components={{ Text: AssistantText, Empty: TypingIndicator }}
         />
-        <StatementCardToolUI />
+
         <ErrorPrimitive.Root
           style={[
             styles.error,

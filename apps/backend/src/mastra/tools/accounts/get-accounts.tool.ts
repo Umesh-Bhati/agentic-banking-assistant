@@ -1,16 +1,9 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { AccountService } from '../../../services/banking/account.service.js';
-import { getSharedSupabaseClient } from '../../../lib/shared-supabase.js';
-
-export const getAccountsTool = createTool({
-  id: 'get-accounts',
-  description: 'Retrieve a list of bank accounts for the user.',
-  inputSchema: z.object({}),
-  execute: async (params, { requestContext }: any) => {
-    const supabase = getSharedSupabaseClient();
-    const accountService = new AccountService(supabase);
-    const userId = requestContext?.get('userId') as string || 'cus_123';
-    return await accountService.getAccounts(userId);
-  },
-});
+import { toolContext, resolveAlias, privateResult } from '../context.js';
+export const getAccountsTool = createTool({ id: 'get-accounts', description: 'Show the customer accounts securely.', inputSchema: z.object({}), execute: async (_params, { requestContext }: any) => {
+        const c = toolContext(requestContext);
+        const items = await new AccountService(c.database).getAccounts(c.principal.customerId);
+        return privateResult(c, 'accounts', items);
+    } });

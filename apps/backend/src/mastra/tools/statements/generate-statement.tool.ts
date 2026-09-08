@@ -1,84 +1,12 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
+import { randomUUID } from 'node:crypto';
+import { toolContext, resolveAlias } from '../context.js';
+import { quoteStatement } from '../../../routes/statements.js';
 import { getSharedSupabaseClient } from '../../../lib/shared-supabase.js';
-
-export const generateStatementTool = createTool({
-  id: 'generate-statement',
-  description: 'Generate an account statement for a given date range.',
-  inputSchema: z.object({
-    accountId: z.string().describe('The account/product ID selected by the user to generate a statement for'),
-    fromDate: z.string().describe('The start date in YYYY-MM-DD format'),
-    toDate: z.string().describe('The end date in YYYY-MM-DD format'),
-    feeAccepted: z.boolean().describe('Whether the user has explicitly accepted the 25 AED fee'),
-  }),
-  execute: async ({ accountId, fromDate, toDate, feeAccepted }, { requestContext }: any) => {
-    if (!feeAccepted) {
-      return { 
-        success: false, 
-        message: 'A fee of 25 AED applies to generate a statement. Please ask the user to confirm they accept the fee before generating.' 
-      };
-    }
-    
-    let resolvedAccountId = accountId;
-    let resolvedAccountNumber = '';
-
-    try {
-      const supabase = getSharedSupabaseClient();
-      const userId = requestContext?.get('userId') as string;
-      if (!userId) throw new Error('Authentication required: no user context available.');
-
-      if (!resolvedAccountId) {
-        const { data: products } = await supabase
-          .from('customer_products')
-          .select('id, product_number, product_type')
-          .eq('customer_id', userId);
-
-        if (products && products.length > 0) {
-          const primaryProduct = products.find((p: any) => p.product_type === 'CURRENT_ACCOUNT') || products[0];
-          resolvedAccountId = primaryProduct.id;
-          resolvedAccountNumber = primaryProduct.product_number;
-        } else {
-          throw new Error('No products found for this user.');
-        }
-      } else {
-        const { data: prod, error } = await supabase
-          .from('customer_products')
-          .select('product_number, customer_id')
-          .eq('id', resolvedAccountId)
-          .single();
-          
-        if (error || !prod) {
-          throw new Error(`Invalid account ID. Could not find product with ID: ${resolvedAccountId}. Please call getUserProductsTool to get the correct product ID first.`);
-        }
-        
-        if (prod.customer_id !== userId) {
-          throw new Error('Unauthorized: You cannot generate a statement for a product that does not belong to you.');
-        }
-        
-        resolvedAccountNumber = prod.product_number;
-      }
-    } catch (err: any) {
-      throw err;
-    }
-
-    const statementId = `stmt_${Math.random().toString(36).substring(2, 9)}`;
-    const baseUrl = process.env.API_URL || '';
-    const downloadUrl = baseUrl 
-      ? `${baseUrl}/api/statements?accountId=${resolvedAccountId}&fromDate=${fromDate}&toDate=${toDate}`
-      : `/api/statements?accountId=${resolvedAccountId}&fromDate=${fromDate}&toDate=${toDate}`;
-
-    return {
-      success: true,
-      statementId,
-      accountNumber: resolvedAccountNumber,
-      fromDate,
-      toDate,
-      fee: 25,
-      currency: 'AED',
-      url: downloadUrl,
-      month: new Date(fromDate).toLocaleString('default', { month: 'long' }),
-      message: 'Statement generated successfully.'
-    };
-  },
-});
-
+export const generateStatementTool = createTool({ id: 'generate-statement', description: 'Display an unconfirmed statement quote. Only explicit secure UI consent can issue a statement or debit a fee.', inputSchema: z.object({ accountId: z.string(), fromDate: z.string(), toDate: z.string() }), execute: async ({ accountId, fromDate, toDate }, { requestContext }: any) => {
+        const c = toolContext(requestContext);
+        const statement = await quoteStatement(getSharedSupabaseClient(), c.principal.authUserId, c.principal.customerId, resolveAlias(c, accountId)!, fromDate, toDate, randomUUID());
+        await c.emit({ type: 'STATEMENT_QUOTE', data: statement });
+        return { displayed: true, message: 'Awaiting secure customer confirmation; no fee has been debited.' };
+    } });

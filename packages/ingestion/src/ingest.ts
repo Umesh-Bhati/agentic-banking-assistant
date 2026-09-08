@@ -1,4 +1,5 @@
 import path from 'path';
+import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'url';
 import Firecrawl from 'firecrawl';
 import { MDocument } from '@mastra/rag';
@@ -10,12 +11,8 @@ import { config } from 'dotenv';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Fallback search for .env in monorepo root or apps/backend/.env
-config();
+// Ingestion has its own credentials; never load backend service-role secrets.
 config({ path: path.resolve(__dirname, '../.env') });
-config({ path: path.resolve(__dirname, '../../../.env') });
-config({ path: path.resolve(__dirname, '../../../apps/backend/.env') });
-config({ path: path.resolve(process.cwd(), 'apps/backend/.env') });
 
 interface IngestionConfig {
   firecrawlApiKey: string;
@@ -28,23 +25,23 @@ interface IngestionConfig {
 
 function cleanEnvVal(val?: string): string {
   if (!val) return '';
-  return val.split('#')[0].trim();
+  return val.trim();
 }
 
 function getConfig(): IngestionConfig {
   const firecrawlApiKey = cleanEnvVal(process.env.FIRECRAWL_API_KEY);
-  const openrouterApiKey = cleanEnvVal(process.env.OPENROUTER_API_KEY);
   const openaiApiKey = cleanEnvVal(process.env.OPENAI_API_KEY);
   const supabaseUrl = cleanEnvVal(process.env.SUPABASE_URL);
-  const supabaseServiceKey = cleanEnvVal(process.env.SUPABASE_SERVICE_KEY);
+  const supabaseServiceKey = cleanEnvVal(process.env.INGESTION_SUPABASE_KEY);
 
-  const apiKey = openrouterApiKey || (openaiApiKey !== 'your_openai_api_key' ? openaiApiKey : '');
-  const isOpenRouter = !!openrouterApiKey || !openaiApiKey || openaiApiKey === 'your_openai_api_key';
+  if (process.env.APPROVED_EMBEDDING_PROVIDER !== 'openai') throw new Error('Explicit approved OpenAI embedding provider required');
+  const apiKey = openaiApiKey;
+  const isOpenRouter = false;
 
   if (!firecrawlApiKey) throw new Error('Missing FIRECRAWL_API_KEY in environment');
   if (!apiKey) throw new Error('Missing OPENROUTER_API_KEY or valid OPENAI_API_KEY in environment');
   if (!supabaseUrl) throw new Error('Missing SUPABASE_URL in environment');
-  if (!supabaseServiceKey) throw new Error('Missing SUPABASE_SERVICE_KEY in environment');
+  if (!supabaseServiceKey) throw new Error('Missing INGESTION_SUPABASE_KEY in environment');
 
   return {
     firecrawlApiKey,
@@ -82,11 +79,11 @@ async function scrapeUrl(firecrawl: Firecrawl, url: string): Promise<string | nu
       console.log(`  ✓ Scraped ${result.markdown.length} characters`);
       return result.markdown;
     } else {
-      console.error(`  ✗ Failed to scrape ${url}:`, (result as any).error);
+      console.error('Source retrieval rejected');
       return null;
     }
   } catch (error) {
-    console.error(`  ✗ Error scraping ${url}:`, error);
+    console.error('Source retrieval failed');
     return null;
   }
 }
@@ -105,7 +102,7 @@ async function chunkContent(content: string, url: string) {
     metadata: {
       source_url: url,
       chunk_index: index,
-      ...chunk.metadata,
+      // Only controlled provenance metadata is retained.
     },
   }));
 }
@@ -130,7 +127,15 @@ async function insertIntoSupabase(
   chunks: Array<{ content: string; metadata: Record<string, unknown> }>,
   embeddings: number[][]
 ) {
-  const records: ChunkRecord[] = chunks.map((chunk, index) => ({
+  if (chunks.length !== embeddings.length || embeddings.some(e => e.length !== 1536 || e.some(n => !Number.isFinite(n)))) throw new Error('Invalid embeddings');
+  const versionId = randomUUID();
+  const contentHash = createHash('sha256').update(chunks.map(c => c.content).join('\n')).digest('hex');
+  const records = chunks.map((chunk, index) => ({
+    version_id: versionId,
+    content_hash: contentHash,
+    source_url: chunk.metadata.source_url,
+    approval_status: 'STAGED',
+    retrieved_at: new Date().toISOString(),
     content: chunk.content,
     metadata: chunk.metadata,
     embedding: embeddings[index],
@@ -142,7 +147,7 @@ async function insertIntoSupabase(
     throw new Error(`Failed to insert into Supabase: ${error.message}`);
   }
 
-  console.log(`  ✓ Inserted ${records.length} chunks into Supabase`);
+  console.log(`Staged ${records.length} chunks as version ${versionId}; administrator review required before publication.`);
 }
 
 async function main() {
@@ -156,7 +161,8 @@ async function main() {
 
   for (const url of config.urls) {
     const markdown = await scrapeUrl(firecrawl, url);
-    if (!markdown) continue;
+    if (!markdown) throw new Error('Source retrieval failed');
+    if (markdown.length > 500000 || /[\w.+-]+@[\w.-]+\.[a-z]{2,}/i.test(markdown)) throw new Error('Source exceeds content policy; review locally before embedding');
 
     const chunks = await chunkContent(markdown, url);
     if (chunks.length === 0) continue;
@@ -170,4 +176,4 @@ async function main() {
   console.log(`\n✓ Ingestion complete! Total chunks: ${totalChunks}`);
 }
 
-main().catch(console.error);
+main().catch(() => { console.error('Ingestion failed; no approval was published.'); process.exitCode = 1; });

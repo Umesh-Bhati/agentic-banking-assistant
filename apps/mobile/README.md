@@ -1,38 +1,23 @@
-# Mobile App
+# Banking mobile application
 
-## Remote Testing Instructions (The "No-Build" Tunnel Method)
+Use `pnpm --filter @boit/mobile start`, `pnpm --filter @boit/mobile typecheck`, and `pnpm --filter @boit/mobile test` from the repository root.
 
-If you need to share this app with someone (like an iOS user) who is not on your local network, you can use the tunnel method to expose both your Expo dev server and your local backend. This allows them to test the app using Expo Go from anywhere in the world.
+Set `EXPO_PUBLIC_API_URL` to the bank API origin. Release builds require HTTPS with no embedded credentials, query, fragment or path. Development builds may use the local backend; use synthetic fixtures only. Do not share account credentials or expose production data through development tunnels.
 
-### 1. Tunnel your Backend (on your laptop)
-You need to expose your local backend (`localhost:3000`) to the internet so the remote phone can reach it.
-1. Open a new terminal on your laptop and run:
-   ```bash
-   npx ngrok http 3000
-   ```
-   *(If it asks you to sign up or authenticate with an ngrok authtoken, follow their instructions).*
-2. Once running, it will give you a public "Forwarding" URL (e.g., `https://a1b2c3d4.ngrok-free.app`). Copy this URL.
+## Security boundaries
 
-### 2. Connect the Mobile App to the Tunnel
-1. Inside the `apps/mobile` folder on your laptop, create a file named `.env`.
-2. Add your ngrok URL to it like this:
-   ```env
-   EXPO_PUBLIC_API_URL=https://a1b2c3d4.ngrok-free.app
-   ```
-   *(Make sure there's no trailing slash at the end of the URL).*
+- `lib/api` provides fixed-origin, header-authenticated, bounded requests and cancellation through body consumption. Mutations are never automatically retried. A 401 clears the current local session.
+- `features/auth/services` stores native refresh/access tokens with device-only unlocked Keychain access and Android backup exclusion. Browser sessions stay in memory. Local biometrics only unlock a stored session; the backend revalidates every unlock. Backgrounding clears financial state and aborts requests. Password sign-in remains available when local biometrics are unavailable.
+- `features/chat/services` contains the single SSE transport and versioned UI envelope validation. Model prose, JSON, URLs and tool calls are inert text. Historical legacy controls are not replayed. Bank UI comes from the authenticated server's separate typed events.
+- `features/actions/services` performs explicit confirmation, server MFA challenges, authorization, status and cancellation. Enrollment requires a real authenticator; pending enrollment can be resumed after switching apps. Secret setup keys are never persisted by the application.
+- Statement fees require explicit consent and MFA. PDF requests use a persisted ID. Native exports use an app cache file removed when sharing settles; logout/background removes other cached statements and cancels pending downloads. An explicit active share remains available to its recipient until the share sheet completes. The user controls exported copies afterward.
 
-### 3. Start Expo with a Tunnel (on your laptop)
-Now we need to tunnel the Metro server so the mobile app itself can be loaded remotely.
-1. In the `apps/mobile` folder, start Expo using the `--tunnel` flag and clear the cache so it picks up the `.env` file:
-   ```bash
-   pnpm exec expo start --tunnel -c
-   ```
-   *(This might prompt you to install `@expo/ngrok`. If it does, press `y` to accept).*
+## Release evidence still required
 
-### 4. Test it on the remote device
-1. Ask the tester to download **Expo Go** from the iOS App Store or Google Play Store.
-2. Give the tester your **Expo account credentials** (email/password) and have them log in to the Expo Go app.
-3. Because you started the server with `--tunnel`, your dev server will magically appear under their "Development servers" list in the app.
-4. They just tap it, and the app will open and connect to your local backend through the tunnel!
+Automated tests cover protocol trust boundaries, origin/path restrictions, fragmented SSE, HTTP failures, authorization headers, pending body cancellation and export cleanup. Typechecking covers the native UI against installed SDK types.
 
-> **Note:** Whenever you're done testing, you can stop the `ngrok` and `expo` commands in your terminal and delete the `.env` file to go back to local development.
+Before deploying to actual devices, verify iOS/Android biometric prompts, refresh rotation, revocation, authenticator switching/resume, background privacy, share-sheet lifetime, and downloaded file protection. Fetch requests request `redirect: 'error'`; native redirect handling must be verified on both release builds, and the API/proxy must not redirect authenticated routes. Checking the final response URL alone does not prevent credentials being sent by a native redirect. Expo Go does not establish release-build security behavior.
+
+Production banking remains disabled until the repository security release gates and independent assessment are complete.
+
+The native target uses the Expo SDK-matched Metro runtime (57.0.15). The optional browser target still needs the SDK-matched React DOM / React Native Web installation and browser integration testing before it can be supported. The existing unused Jest Native test dependency pulls a mismatched React test renderer; the current Vitest security suite does not load that renderer. Resolve its version pairing before adding native component-renderer tests.

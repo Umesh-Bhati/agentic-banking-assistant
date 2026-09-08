@@ -1,69 +1,22 @@
+import { query } from '../helpers/database.js';
 import { describe, it, expect, vi } from 'vitest';
-import { generateStatementTool } from '../../src/mastra/tools/statements/generate-statement.tool.js';
-
-vi.mock('../../src/lib/shared-supabase.js', () => ({
-  getSharedSupabaseClient: vi.fn(() => ({
-    from: vi.fn((table: string) => {
-      if (table === 'bank_accounts') {
-        return {
-          select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockImplementation((col: string, val: string) => {
-            if (col === 'customer_id') {
-              return Promise.resolve({
-                data: [
-                  { id: 'acc-001', account_number: 'AE2403300000123456789', type: 'CURRENT' },
-                  { id: 'acc-002', account_number: 'AE123456789012345678902', type: 'SAVINGS' }
-                ],
-                error: null,
-              });
-            }
-            if (col === 'id') {
-              return {
-                single: vi.fn().mockResolvedValue({
-                  data: { account_number: 'AE2403300000123456789' },
-                  error: null,
-                })
-              };
-            }
-            return Promise.resolve({ data: [], error: null });
-          }),
-        };
-      }
-      return {};
-    }),
-  })),
-}));
-
-// Helper to create a mock requestContext with userId
-const createMockContext = (userId: string) => ({
-  requestContext: {
-    get: (key: string) => key === 'userId' ? userId : undefined,
-  },
+import { quoteStatement, validatePeriod } from '../../src/routes/statements.js';
+describe('Statement proposals', () => {
+    it.each([['2026-02-31', '2026-03-02'], ['2026-08-02', '2026-08-01'], ['2020-01-01', '2026-08-01'], ['invalid', '2026-08-01']])('rejects invalid period %s %s', (a, b) => expect(() => validatePeriod(a, b)).toThrow());
+    it('creates only a quote with exact dates and owner, never executes or returns a URL', async () => {
+        vi.stubEnv('BANKING_MUTATIONS_ENABLED', 'true');
+        const rpc = vi.fn(async () => ({ data: { id: 'statement', action_id: 'action', fee: '25.00', currency: 'AED' }, error: null }));
+        const result = await quoteStatement({ rpc, from: () => query({ data: { account_number: 'AE1234' }, error: null }) } as any, 'auth', 'customer', 'product', '2026-08-01', '2026-08-02', 'retry-key');
+        expect(rpc).toHaveBeenCalledTimes(1);
+        expect(rpc).toHaveBeenCalledWith('quote_statement', expect.objectContaining({ p_user_id: 'auth', p_customer_id: 'customer', p_idempotency_key: 'retry-key' }));
+        expect(result).not.toHaveProperty('url');
+    });
 });
 
-describe('generateStatementTool Unit Tests', () => {
-  it('should reject execution if feeAccepted is false', async () => {
-    const result = await generateStatementTool.execute({
-      accountId: 'acc-001',
-      fromDate: '2026-08-01',
-      toDate: '2026-08-31',
-      feeAccepted: false,
-    }, createMockContext('customer-001') as any);
-
-    expect(result.success).toBe(false);
-    expect(result.message).toContain('fee of 25 AED applies');
-  });
-
-  it('should generate statement for a specified accountId', async () => {
-    const result = await generateStatementTool.execute({
-      accountId: 'acc-001',
-      fromDate: '2026-08-01',
-      toDate: '2026-08-31',
-      feeAccepted: true,
-    }, createMockContext('customer-001') as any);
-
-    expect(result.success).toBe(true);
-    expect(result.url).toContain('accountId=acc-001');
-    expect(result.accountNumber).toBe('AE2403300000123456789');
-  });
+it('does not create quote state while mutations are disabled', async () => {
+    vi.stubEnv('BANKING_MUTATIONS_ENABLED', 'false');
+    const rpc = vi.fn();
+    await expect(quoteStatement({rpc} as any,'auth','customer','product','2026-08-01','2026-08-02','key')).rejects.toThrow('disabled');
+    expect(rpc).not.toHaveBeenCalled();
+    vi.unstubAllEnvs();
 });

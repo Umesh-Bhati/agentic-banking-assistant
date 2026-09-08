@@ -107,7 +107,7 @@ export function LoginScreen() {
           </TouchableOpacity>
 
           <TouchableOpacity style={{ alignItems: 'center', marginTop: Spacing.md }} onPress={() => setShowSignup(true)}>
-            <Text style={{ color: Colors.accent, fontSize: 14, fontWeight: Typography.weight.semibold }}>Don't have an account? Sign Up</Text>
+            <Text style={{ color: Colors.accent, fontSize: 14, fontWeight: Typography.weight.semibold }}>Need an account? Bank enrollment</Text>
           </TouchableOpacity>
 
           {canUseBiometrics && handleBiometricAuth ? (

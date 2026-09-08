@@ -1,63 +1,45 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { ActionRepository } from '../../src/repositories/action.repository.js';
+import { describe, it, expect, vi } from 'vitest';
 import { AuthorizationService } from '../../src/services/actions/authorization.service.js';
-import { ActionState } from '@boit/shared-types';
-
-describe('AuthorizationService', () => {
-  let repo: ActionRepository;
-  let authService: AuthorizationService;
-  const userId = 'b1eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
-
-  beforeEach(() => {
-    repo = new ActionRepository();
-    authService = new AuthorizationService(repo);
-  });
-
-  it('should authorize action with valid 4-digit PIN', async () => {
-    const action = await repo.create({
-      actionType: 'CARD_BLOCK',
-      userId,
-      status: ActionState.PENDING_AUTHORIZATION,
+import { query, principal } from '../helpers/database.js';
+describe('MFA fail-closed authorization', () => {
+    it.each([{ pin: '1234' }, { biometricToken: 'verified' }, { email: 'a@b.com', password: 'correct' }])('rejects legacy credential %j', async (credentials) => {
+        const rpc = vi.fn();
+        const service = new AuthorizationService({ rpc } as any, {} as any);
+        await expect(service.authorizeAction('action', principal.customerId, credentials)).rejects.toThrow('TOTP');
+        expect(rpc).not.toHaveBeenCalled();
     });
-
-    const result = await authService.authorizeAction(action.id, userId, { pin: '1234' });
-    expect(result.status).toBe(ActionState.AUTHORIZED);
-    expect(result.metadata?.authMethod).toBe('PIN');
-  });
-
-  it('should authorize action with biometric assertion token', async () => {
-    const action = await repo.create({
-      actionType: 'CARD_BLOCK',
-      userId,
-      status: ActionState.PENDING_AUTHORIZATION,
+    it.each([true, false])('rejects expired or consumed challenges before provider call (%s)', async (consumed) => {
+        const challenge = { id: 'challenge', consumed_at: consumed ? 'today' : null, expires_at: new Date(Date.now() - 1).toISOString() };
+        const verify = vi.fn();
+        const rpc = vi.fn();
+        const service = new AuthorizationService({ rpc } as any, { from: () => query({ data: challenge, error: null }) } as any);
+        await expect(service.authorizeAction('action', principal.customerId, { challengeId: 'challenge', code: '123456' }, principal, { auth: { mfa: { verify } } } as any)).rejects.toThrow('unavailable');
+        expect(verify).not.toHaveBeenCalled();
+        expect(rpc).not.toHaveBeenCalled();
     });
-
-    const result = await authService.authorizeAction(action.id, userId, { biometricToken: 'bio_verified_123456' });
-    expect(result.status).toBe(ActionState.AUTHORIZED);
-    expect(result.metadata?.authMethod).toBe('BIOMETRIC');
-  });
-
-  it('should reject invalid PIN format', async () => {
-    const action = await repo.create({
-      actionType: 'CARD_BLOCK',
-      userId,
-      status: ActionState.PENDING_AUTHORIZATION,
+    it('does not authorize on verification outage', async () => {
+        const challenge = { id: 'challenge', factor_id: 'factor', expires_at: new Date(Date.now() + 100000).toISOString() };
+        const rpc = vi.fn();
+        const service = new AuthorizationService({ rpc } as any, { from: () => query({ data: challenge, error: null }) } as any);
+        await expect(service.authorizeAction('action', principal.customerId, { challengeId: 'challenge', code: '123456' }, principal, { auth: { mfa: { verify: async () => ({ data: null, error: { message: 'outage' } }) } } } as any)).rejects.toThrow('verification failed');
+        expect(rpc).not.toHaveBeenCalled();
     });
-
-    await expect(
-      authService.authorizeAction(action.id, userId, { pin: '12' })
-    ).rejects.toThrow('Invalid PIN format');
-  });
-
-  it('should reject authorization if action is not in PENDING_AUTHORIZATION state', async () => {
-    const action = await repo.create({
-      actionType: 'CARD_BLOCK',
-      userId,
-      status: ActionState.CREATED,
+});
+describe('Concurrent MFA token isolation', () => {
+    it('keeps verification responses local even when a service is reused', async () => {
+        const rpc = vi.fn(async (_name, args) => ({ id: args.p_action_id }));
+        const database = { from: () => query({ data: { id: 'challenge', factor_id: 'factor', expires_at: new Date(Date.now() + 100000).toISOString() }, error: null }) };
+        const service = new AuthorizationService({ rpc } as any, database as any);
+        const verify = (id: string, delay: number) => ({ auth: { mfa: { verify: async () => {
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        return { data: { user: { id }, access_token: 'access-' + id, refresh_token: 'refresh-' + id, expires_in: 3600 }, error: null };
+                    } } } });
+        const second = { ...principal, authUserId: 'second-user', customerId: 'second-customer' };
+        const results = await Promise.all([
+            service.authorizeAction('one', principal.customerId, { challengeId: 'challenge', code: '123456' }, principal, verify(principal.authUserId, 10) as any),
+            service.authorizeAction('two', second.customerId, { challengeId: 'challenge', code: '123456' }, second, verify(second.authUserId, 1) as any),
+        ]);
+        expect(results[0].session.token).toBe('access-' + principal.authUserId);
+        expect(results[1].session.token).toBe('access-second-user');
     });
-
-    await expect(
-      authService.authorizeAction(action.id, userId, { pin: '1234' })
-    ).rejects.toThrow(/Cannot authorize action in state/);
-  });
 });
