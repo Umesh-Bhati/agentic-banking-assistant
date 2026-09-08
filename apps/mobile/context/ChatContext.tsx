@@ -11,8 +11,9 @@ import { streamChat } from '../features/chat/services/stream';
 import { chatRunError } from '../features/chat/services/run-error';
 import { clearStatementFiles } from '../features/statements/services/download';
 import { actions } from '../features/actions/services/actions';
-import { parseUiEvent, type BankingUi } from '../features/chat/services/ui-events';
-export interface Message { id: string; role: 'user' | 'assistant'; content: string; }
+import { parseUiEvent } from '../features/chat/services/ui-events';
+import { restoreBankingMessages, type Message, type MessageBankingUi } from '../features/chat/services/message-events';
+export type { Message } from '../features/chat/services/message-events';
 export interface ChatSession { id: string; title?: string; created_at: string; updated_at: string; }
 export interface AuthorizationPrompt { actionId: string; cardType: string; last4: string; }
 const newId = randomUUID;
@@ -30,7 +31,7 @@ function useBankingState() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [isSessionsLoading, setIsSessionsLoading] = useState(false);
   const [isSessionLoading, setIsSessionLoading] = useState(false);
-  const [uiEvents, setUiEvents] = useState<BankingUi[]>([]);
+  const [uiEvents, setUiEvents] = useState<MessageBankingUi[]>([]);
   const [pinModalData, setPinModalData] = useState<AuthorizationPrompt | null>(null);
   const [pinLoading, setPinLoading] = useState(false);
   const [pinError, setPinError] = useState<string>();
@@ -128,9 +129,8 @@ function useBankingState() {
     try {
       const data = await json<Array<Message & { ui_data?: unknown }>>(`/api/chat/sessions/${resourceId(id)}/messages`, authToken);
       if (epoch !== generation.current) return;
-      setSessionId(id); setMessages(data.map(({ id, role, content }) => ({ id, role, content })));
-      // Old model-authored JSON and legacy ui_data are deliberately never replayed as controls.
-      setUiEvents(data.flatMap(message => { const event = parseUiEvent(message.ui_data); return event ? [event] : []; }));
+      const restored = restoreBankingMessages(data);
+      setSessionId(id); setMessages(restored.messages); setUiEvents(restored.events);
     } catch (error) { if (epoch === generation.current) report(error); }
     finally { if (epoch === generation.current) setIsSessionLoading(false); }
   };
@@ -147,12 +147,18 @@ function useBankingState() {
       const abort = () => controller.abort(); abortSignal.addEventListener('abort', abort, { once: true });
       if (abortSignal.aborted) controller.abort();
       const epoch = generation.current; let text = '';
+      const bankingTurnId = newId();
+      const metadata = { custom: { bankingTurnId } };
       try {
         for await (const raw of streamChat(authToken, sessionId, part.text, controller.signal)) {
           if (epoch !== generation.current) return;
           const event = raw as { type: string; content?: string };
-          if (event.type === 'text' && typeof event.content === 'string') { text += event.content; yield { content: [{ type: 'text', text }] }; }
-          const ui = parseUiEvent(raw); if (ui) setUiEvents(previous => [...previous.slice(-19), ui]);
+          if (event.type === 'text' && typeof event.content === 'string') { text += event.content; yield { content: [{ type: 'text', text }], metadata }; }
+          const ui = parseUiEvent(raw);
+          if (ui) {
+            setUiEvents(previous => [...previous, { ...ui, bankingTurnId }]);
+            yield { content: text ? [{ type: 'text', text }] : [], metadata };
+          }
         }
         await fetchSessions();
       } catch (error) {
@@ -161,7 +167,7 @@ function useBankingState() {
           isCancelled: () => controller.signal.aborted || abortSignal.aborted,
           expireSession,
         });
-        if (failure && epoch === generation.current && !controller.signal.aborted && !abortSignal.aborted) yield failure;
+        if (failure && epoch === generation.current && !controller.signal.aborted && !abortSignal.aborted) yield { ...failure, metadata };
       }
       finally { abortSignal.removeEventListener('abort', abort); controller.abort(); }
     },

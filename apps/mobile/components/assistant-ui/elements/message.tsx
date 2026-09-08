@@ -21,6 +21,7 @@ const UserText: TextMessagePartComponent = ({ text }) => {
   );
 };
 
+import { BankingEvents } from "../../../features/chat/components/BankingEvents";
 import { BankingMessageRenderer } from "../../../features/chat/components/BankingMessageRenderer";
 
 const AssistantText: TextMessagePartComponent = ({ text }) => {
@@ -113,12 +114,15 @@ function UserMessage() {
 
 function AssistantMessage() {
   const { colors } = useTheme();
+  const bankingTurnId = useAuiState((s) => s.message.metadata.custom?.bankingTurnId);
   return (
     <MessagePrimitive.Root style={styles.assistantContainer}>
       <View style={styles.assistantContent}>
         <MessagePrimitive.Parts
           components={{ Text: AssistantText, Empty: TypingIndicator }}
         />
+
+        <BankingEvents bankingTurnId={typeof bankingTurnId === "string" ? bankingTurnId : undefined} />
 
         <ErrorPrimitive.Root
           style={[
@@ -178,6 +182,7 @@ const styles = StyleSheet.create({
     width: "100%",
   },
   assistantContent: {
+    width: "100%",
     paddingHorizontal: 2,
   },
   userText: {
