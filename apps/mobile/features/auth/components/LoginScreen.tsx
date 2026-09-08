@@ -59,7 +59,7 @@ export function LoginScreen() {
                 onChangeText={setEmail}
                 autoCapitalize="none"
                 keyboardType="email-address"
-                placeholder="john.doe@gmail.com"
+                placeholder={__DEV__ ? 'prashant@gmail.com' : 'name@example.com'}
                 placeholderTextColor={Colors.textMuted}
               />
             </View>
@@ -93,6 +93,12 @@ export function LoginScreen() {
               </TouchableOpacity>
             </View>
           </View>
+
+          {__DEV__ ? (
+            <Text style={styles.demoCredentials}>
+              Local demo: prashant@gmail.com / prashant123
+            </Text>
+          ) : null}
 
           <TouchableOpacity
             style={[styles.loginButton, loginLoading && styles.loginButtonDisabled]}
@@ -175,6 +181,11 @@ const styles = StyleSheet.create({
   },
   form: {
     gap: Spacing.md,
+  },
+  demoCredentials: {
+    color: Colors.textMuted,
+    fontSize: 12,
+    textAlign: 'center',
   },
   inputGroup: {
     marginBottom: Spacing.md,

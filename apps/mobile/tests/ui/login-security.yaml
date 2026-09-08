@@ -2,6 +2,7 @@ appId: ae.almasraf.mobile
 ---
 - launchApp
 - assertVisible: Email address
+- assertVisible: "Local demo: prashant@gmail.com / prashant123"
 - tapOn:
     id: login-email
 - inputText: ${DEMO_EMAIL}
