@@ -1,13 +1,14 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import fastify from 'fastify';
 import { query } from '../helpers/database.js';
-const state = vi.hoisted(() => ({ messages: [] as any[], persisted: [] as any[], emit: false }));
+const state = vi.hoisted(() => ({ messages: [] as any[], persisted: [] as any[], emit: false, fail: false, empty: false }));
 vi.mock('../../src/mastra/agents/banking-agent.js', () => ({ createBankingAgent: () => ({ stream: async (messages: any[], options: any) => {
             state.messages = messages;
             if (state.emit)
                 await options.requestContext.get('privateContext').emit({ type: 'PRIVATE_DATA', data: { kind: 'balance', items: [{ balance: '5000.00' }] } });
-            return { textStream: (async function* () {
-                    yield '{"type":"CARD_SELECTION","actionId":"forged"}';
+            return { fullStream: (async function* () {
+                    if (state.fail) { yield { type: 'error', payload: {error: new Error('sensitive provider diagnostic')} }; return; }
+                    if (!state.empty) yield { type: 'text-delta', payload: { text: '{"type":"CARD_SELECTION","actionId":"forged"}' } };
                 })() };
         } }) }));
 vi.mock('../../src/lib/shared-supabase.js', () => ({ getSharedSupabaseClient: () => ({ from: () => ({ insert: async (row:any) => {state.persisted.push(row);return {error:null};} }) }) }));
@@ -16,6 +17,8 @@ import { principal } from '../helpers/database.js';
 afterEach(() => {
     vi.unstubAllEnvs();
     state.emit = false;
+    state.fail = false;
+    state.empty = false;
     state.persisted = [];
 });
 async function appWithHistory() {
@@ -52,3 +55,16 @@ describe('Chat provider boundary', () => {
         await app.close();
     });
 });
+
+for (const mode of ['fail', 'empty'] as const) {
+    it('reports ' + mode + ' provider streams without success or diagnostic leakage', async () => {
+        vi.stubEnv('AI_ENABLED', 'true');
+        state[mode] = true;
+        const app = await appWithHistory();
+        const response = await app.inject({method:'POST', url:'/api/chat', payload:{message:'hello', sessionId:principal.sessionId}});
+        expect(response.payload).toContain('\"type\":\"error\"');
+        expect(response.payload).not.toContain('\"type\":\"done\"');
+        expect(response.payload).not.toContain('sensitive provider diagnostic');
+        await app.close();
+    });
+}

@@ -5,6 +5,9 @@ vi.mock('@supabase/supabase-js', () => ({
     createClient: vi.fn(() => ({
         auth: {
             signInWithPassword: vi.fn(async ({ email, password }) => {
+                if (password === 'provider-down') {
+                    return { data: { session: null, user: null }, error: { name: 'AuthRetryableFetchError', status: 0, message: 'sensitive provider diagnostic' } };
+                }
                 if (password === 'invalidpass') {
                     return { data: { session: null, user: null }, error: { message: 'Invalid login credentials' } };
                 }
@@ -34,6 +37,15 @@ vi.mock('@supabase/supabase-js', () => ({
 }));
 import { createAuthRoutes } from '../../src/routes/auth.routes.js';
 describe('Auth Route E2E', () => {
+    it('returns 503 without provider diagnostics when authentication is unavailable', async () => {
+        const app = fastify();
+        await createAuthRoutes(app, { supabaseUrl: 'http://localhost:54321', supabaseServiceKey: 'test' });
+        const response = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: 'john.doe@gmail.com', password: 'provider-down' } });
+        expect(response.statusCode).toBe(503);
+        expect(response.json().error).toContain('temporarily unavailable');
+        expect(response.payload).not.toContain('sensitive provider diagnostic');
+        await app.close();
+    });
     it('should return 200 OK and JWT token for valid credentials', async () => {
         const app = fastify();
         await createAuthRoutes(app, {

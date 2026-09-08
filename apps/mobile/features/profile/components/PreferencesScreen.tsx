@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Modal, View, Text, TextInput, Button, ActivityIndicator, ScrollView } from 'react-native';
+import { View, Text, TextInput, Button, ActivityIndicator, ScrollView } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { useChat } from '../../../context/ChatContext';
 import { json } from '../../../lib/api/client';
 import type { Session } from '../../auth/services/session';
@@ -37,7 +38,7 @@ export function PreferencesScreen({ visible, onClose }: { visible: boolean; onCl
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Verification failed'); }
     finally { setBusy(false); }
   };
-  return <Modal visible={visible} onRequestClose={onClose} animationType="slide"><ScrollView contentContainerStyle={{ padding: 28, gap: 20 }}>
+  return <SafeAreaProvider><SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}><ScrollView contentContainerStyle={{ padding: 28, gap: 20 }}>
     <Text style={{ fontSize: 22, fontWeight: '700' }}>Banking security</Text>
     <Text>Sensitive operations require an authenticator code verified by the bank. Face ID or fingerprint only unlocks this app.</Text>
     <Text>If you lose your authenticator, contact bank support for identity recovery.</Text>
@@ -48,5 +49,5 @@ export function PreferencesScreen({ visible, onClose }: { visible: boolean; onCl
     {!!error && <Text accessibilityRole="alert" style={{ color: '#991b1b' }}>{error}</Text>}
     {busy && <ActivityIndicator />}
     <Button title="Close" onPress={onClose} disabled={busy} />
-  </ScrollView></Modal>;
+  </ScrollView></SafeAreaView></SafeAreaProvider>;
 }

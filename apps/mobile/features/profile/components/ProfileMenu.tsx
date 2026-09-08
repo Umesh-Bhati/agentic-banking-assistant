@@ -22,24 +22,26 @@ export function ProfileMenu() {
 
   return (
     <>
-      <TouchableOpacity 
-        style={styles.avatarButton} 
+      <TouchableOpacity
+        accessibilityLabel="Profile menu"
+        style={styles.avatarButton}
         onPress={() => setMenuVisible(true)}
       >
         <Text style={styles.avatarText}>{getInitials(userProfile?.full_name)}</Text>
       </TouchableOpacity>
 
       <Modal
-        visible={menuVisible}
+        visible={menuVisible || preferencesVisible}
         transparent={true}
         animationType="fade"
-        onRequestClose={() => setMenuVisible(false)}
+        onRequestClose={() => { setMenuVisible(false); setPreferencesVisible(false); }}
       >
-        <Pressable 
-          style={styles.overlay} 
+        {preferencesVisible ? <PreferencesScreen visible onClose={() => setPreferencesVisible(false)} /> : <Pressable
+          accessible={false}
+          style={styles.overlay}
           onPress={() => setMenuVisible(false)}
         >
-          <Pressable style={styles.menuContainer}>
+          <Pressable accessible={false} style={styles.menuContainer}>
             <View style={styles.header}>
               <View style={styles.headerInfo}>
                 <View style={styles.largeAvatar}>
@@ -56,7 +58,8 @@ export function ProfileMenu() {
             </View>
 
             <View style={styles.menuItems}>
-              <TouchableOpacity 
+              <TouchableOpacity
+                accessibilityLabel="Preferences"
                 style={styles.menuItem}
                 onPress={() => {
                   setMenuVisible(false);
@@ -67,7 +70,8 @@ export function ProfileMenu() {
                 <Text style={styles.menuItemText}>Preferences</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity 
+              <TouchableOpacity
+                accessibilityLabel="Logout"
                 style={[styles.menuItem, styles.logoutItem]}
                 onPress={() => {
                   setMenuVisible(false);
@@ -79,13 +83,8 @@ export function ProfileMenu() {
               </TouchableOpacity>
             </View>
           </Pressable>
-        </Pressable>
+        </Pressable>}
       </Modal>
-
-      <PreferencesScreen 
-        visible={preferencesVisible} 
-        onClose={() => setPreferencesVisible(false)} 
-      />
     </>
   );
 }

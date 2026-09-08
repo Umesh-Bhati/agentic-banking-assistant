@@ -8,6 +8,7 @@ import { json, abortRequests, ApiError, onUnauthorized } from '../lib/api/client
 import { resourceId } from '../lib/api/policy';
 import { restoreSession, saveSession, clearSession, type Session } from '../features/auth/services/session';
 import { streamChat } from '../features/chat/services/stream';
+import { chatRunError } from '../features/chat/services/run-error';
 import { clearStatementFiles } from '../features/statements/services/download';
 import { actions } from '../features/actions/services/actions';
 import { parseUiEvent, type BankingUi } from '../features/chat/services/ui-events';
@@ -154,7 +155,14 @@ function useBankingState() {
           const ui = parseUiEvent(raw); if (ui) setUiEvents(previous => [...previous.slice(-19), ui]);
         }
         await fetchSessions();
-      } catch (error) { if (error instanceof ApiError && error.status === 401) await expireSession(); throw error; }
+      } catch (error) {
+        const failure = await chatRunError(error, {
+          isCurrent: () => epoch === generation.current,
+          isCancelled: () => controller.signal.aborted || abortSignal.aborted,
+          expireSession,
+        });
+        if (failure && epoch === generation.current && !controller.signal.aborted && !abortSignal.aborted) yield failure;
+      }
       finally { abortSignal.removeEventListener('abort', abort); controller.abort(); }
     },
   }), [authToken, sessionId]);

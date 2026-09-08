@@ -1,0 +1,37 @@
+appId: ae.almasraf.mobile
+---
+- launchApp
+- assertVisible: Email address
+- tapOn:
+    id: login-email
+- inputText: ${DEMO_EMAIL}
+- tapOn:
+    id: login-password
+- inputText: ${DEMO_PASSWORD}
+- tapOn: Log In to Mobile Banking
+- extendedWaitUntil:
+    visible: Al Masraf Assistant
+    timeout: 20000
+- tapOn: Profile menu
+- tapOn: Preferences
+- assertVisible: Banking security
+- assertVisible: Authenticator verified successfully.
+- takeScreenshot: verified-authenticator
+- tapOn: Close
+- assertVisible: Al Masraf Assistant
+- pressKey: HOME
+- launchApp
+- assertVisible: Email address
+- tapOn:
+    id: login-email
+- inputText: ${DEMO_EMAIL}
+- tapOn:
+    id: login-password
+- inputText: ${DEMO_PASSWORD}
+- tapOn: Log In to Mobile Banking
+- extendedWaitUntil:
+    visible: Al Masraf Assistant
+    timeout: 20000
+- tapOn: Profile menu
+- tapOn: Logout
+- assertVisible: Email address

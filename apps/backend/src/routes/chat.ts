@@ -66,15 +66,22 @@ export async function createChatRoute(fastify: FastifyInstance, _config: unknown
                 send({ version: 1, type: 'ui', data: event });
             };
             const requestContext = new RequestContext();
+            requestContext.set('currentDate', new Date().toISOString().slice(0, 10));
             requestContext.set('privateContext', { principal: request.principal, database: request.database, aliases: new Map<string, string>(), signal: controller.signal, emit });
             const messages = [...previous.filter(m => m.content).slice(-12).map(m => m.role === 'assistant' ? { role: 'assistant' as const, content: minimizeText(m.content).slice(0, 4000) } : { role: 'user' as const, content: minimizeText(m.content).slice(0, 4000) }), { role: 'user' as const, content: messageSafe }];
             const stream = await bankingAgent.stream(messages, { requestContext, maxSteps: 8, modelSettings: { maxOutputTokens: 2000 }, abortSignal: controller.signal });
-            for await (const chunk of stream.textStream) {
-                text += chunk;
+            for await (const chunk of stream.fullStream) {
+                if (chunk.type === 'error')
+                    throw new Error('AI provider stream failed');
+                if (chunk.type !== 'text-delta')
+                    continue;
+                text += chunk.payload.text;
                 if (text.length > 16000)
                     throw new Error('Response limit exceeded');
-                send({ version: 1, type: 'text', content: chunk });
+                send({ version: 1, type: 'text', content: chunk.payload.text });
             }
+            if (!text.trim() && ui.length === 0)
+                throw new Error('Empty AI response');
             await sessions.saveMessage(sessionId, 'assistant', minimizeText(text), undefined, request.userId);
             send({ version: 1, type: 'done' });
             request.log.info({ event: 'ai_response_completed', characters: text.length, toolEvents: ui.length }, 'AI response completed');

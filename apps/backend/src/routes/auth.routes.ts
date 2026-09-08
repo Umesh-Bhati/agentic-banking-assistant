@@ -28,6 +28,8 @@ export async function createAuthRoutes(fastify: FastifyInstance, config: {
         if (typeof email !== 'string' || typeof password !== 'string' || email.length > 254 || password.length > 1024)
             return reply.code(400).send({ error: 'Invalid credentials' });
         const { data, error } = await client().auth.signInWithPassword({ email: email.trim(), password });
+        if (error && (error.name === 'AuthRetryableFetchError' || error.status === 0 || (error.status ?? 0) >= 500))
+            return reply.code(503).send({ error: 'Authentication service temporarily unavailable. Try again shortly.' });
         if (error)
             return reply.code(401).send({ error: 'Authentication failed' });
         try {

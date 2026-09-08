@@ -9,3 +9,6 @@ dist/
 mastra.db*
 supabase/.temp/
 supabase/.branches/
+apps/mobile/ios/
+apps/mobile/android/
+artifacts/demo/

@@ -52,6 +52,8 @@ export function LoginScreen() {
             <View style={styles.inputWrapper}>
               <Mail size={20} color={Colors.textMuted} style={styles.inputIcon} />
               <TextInput
+                accessibilityLabel="Email address"
+                testID="login-email"
                 style={styles.input}
                 value={email}
                 onChangeText={setEmail}
@@ -68,6 +70,8 @@ export function LoginScreen() {
             <View style={styles.inputWrapper}>
               <Lock size={20} color={Colors.textMuted} style={styles.inputIcon} />
               <TextInput
+                accessibilityLabel="Password"
+                testID="login-password"
                 style={styles.input}
                 value={password}
                 onChangeText={setPassword}
