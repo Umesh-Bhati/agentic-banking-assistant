@@ -14,6 +14,16 @@ export interface ChatMessageRow {
     ui_data?: any;
     created_at: string;
 }
+export function chatSessionTitle(initialMessage?: string): string {
+    const title = initialMessage?.normalize('NFKC').replace(/\s+/g, ' ').trim();
+    if (!title)
+        return 'New Conversation';
+    if (title.length <= 60)
+        return title;
+    const candidate = title.slice(0, 59);
+    const wordBoundary = candidate.lastIndexOf(' ');
+    return candidate.slice(0, wordBoundary >= 30 ? wordBoundary : 59).replace(/[.,;:!?]+$/, '') + '…';
+}
 export class SessionService {
     constructor(private supabase: SupabaseClient, private writer: SupabaseClient = supabase) {
     }
@@ -68,7 +78,7 @@ export class SessionService {
                 throw new Error('Session not found');
             return;
         }
-        const { error: insertError } = await this.writer.from('chat_sessions').insert({ id: sessionId, user_id: userId, title: 'Banking conversation' });
+        const { error: insertError } = await this.writer.from('chat_sessions').insert({ id: sessionId, user_id: userId, title: chatSessionTitle(initialMessage) });
         if (insertError)
             throw new Error('Unable to persist session');
     }

@@ -92,9 +92,9 @@ export async function createChatRoute(fastify: FastifyInstance, _config: unknown
         let text = '';
         const ui: ServerUIEvent[] = [];
         try {
-            await sessions.ensureSessionExists(sessionId, request.userId);
-            const previous = await sessions.getSessionMessages(sessionId, request.userId);
             const messageSafe = minimizeText(message);
+            await sessions.ensureSessionExists(sessionId, request.userId, messageSafe);
+            const previous = await sessions.getSessionMessages(sessionId, request.userId);
             const actionPolicy = sensitiveActionPolicy(messageSafe, hasPendingStatementRequirements(previous));
             await sessions.saveMessage(sessionId, 'user', messageSafe, undefined, request.userId);
             reply.hijack();

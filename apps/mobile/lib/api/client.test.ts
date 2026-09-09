@@ -34,4 +34,10 @@ describe('authenticated transport', () => {
     await expect(json('/actions/id/authorize', 'private', { code: '123456' })).rejects.toThrow();
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
+  it('does not label a bodyless DELETE request as JSON', async () => {
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{"success":true}', { status: 200 }));
+    await json('/api/chat/sessions/session-id', 'private', undefined, 'DELETE');
+    const headers = new Headers(fetcher.mock.calls[0]?.[1]?.headers);
+    expect(headers.get('content-type')).toBeNull();
+  });
 });

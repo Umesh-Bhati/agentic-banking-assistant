@@ -3,7 +3,7 @@ import { Drawer } from 'expo-router/drawer';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { ChatProvider, useChat } from '../context/ChatContext';
-import { View, Text, TouchableOpacity, FlatList, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, FlatList, StyleSheet, ActivityIndicator, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, BorderRadius } from '../constants/theme';
 import { ProfileMenu } from '../features/profile/components/ProfileMenu';
@@ -19,6 +19,28 @@ function CustomDrawerContent(props: any) {
     deleteSession,
     handleLogout
   } = useChat();
+
+  const confirmDeleteSession = (id: string, title?: string) => {
+    Alert.alert(
+      'Delete chat?',
+      `“${title || 'New Conversation'}” will be permanently deleted.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: () => { void deleteSession(id); } },
+      ],
+    );
+  };
+
+  const confirmLogout = () => {
+    Alert.alert(
+      'Log out?',
+      'You will need to sign in again to access your banking assistant.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Log out', style: 'destructive', onPress: () => { props.navigation.closeDrawer(); void handleLogout(); } },
+      ],
+    );
+  };
 
   useEffect(() => {
     fetchSessions();
@@ -59,17 +81,14 @@ function CustomDrawerContent(props: any) {
                 {item.title || 'New Conversation'}
               </Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.deleteButton} onPress={() => deleteSession(item.id)}>
+            <TouchableOpacity style={styles.deleteButton} onPress={() => confirmDeleteSession(item.id, item.title)}>
               <Ionicons name="trash-outline" size={20} color="#ff3b30" />
             </TouchableOpacity>
           </View>
         )}
         contentContainerStyle={styles.sessionList}
       />
-      <TouchableOpacity style={styles.sidebarLogoutButton} onPress={() => {
-        handleLogout();
-        props.navigation.closeDrawer();
-      }}>
+      <TouchableOpacity style={styles.sidebarLogoutButton} onPress={confirmLogout}>
         <Ionicons name="log-out-outline" size={24} color="#ff3b30" />
       </TouchableOpacity>
     </View>

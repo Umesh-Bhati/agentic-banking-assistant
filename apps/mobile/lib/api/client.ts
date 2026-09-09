@@ -19,7 +19,7 @@ export async function request(path: string, token: string | null, init: RequestI
   try {
     const response = await fetch(`${API_ORIGIN}${apiPath(path)}`, {
       ...init, signal: controller.signal, redirect: 'error', cache: 'no-store',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Banking-Client-Version': '1', ...init.headers, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      headers: { Accept: 'application/json', ...(init.body == null ? {} : { 'Content-Type': 'application/json' }), 'X-Banking-Client-Version': '1', ...init.headers, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     });
     if (response.redirected || (response.url && new URL(response.url).origin !== API_ORIGIN)) throw new Error('Unexpected redirect');
     if (response.status === 401 && token) unauthorized?.(token);
