@@ -1,12 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
-  Keyboard,
-} from "react-native";
+import { View, Text, StyleSheet } from "react-native";
+import { useKeyboardHandler } from "react-native-keyboard-controller";
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useChatScroll } from "../../../features/chat/components/useChatScroll";
 import { MessageBubble } from "./message";
@@ -90,37 +87,41 @@ function ChatMessages() {
   );
 }
 
+function useGradualKeyboardHeight() {
+  const height = useSharedValue(0);
+
+  useKeyboardHandler(
+    {
+      onMove: (event) => {
+        "worklet";
+        height.value = Math.max(event.height, 0);
+      },
+    },
+    [],
+  );
+
+  return height;
+}
+
 export function Thread() {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
-
-  const containerRef = useRef<View>(null);
-  const [keyboardOffset, setKeyboardOffset] = useState(0);
-  const [keyboardVisible, setKeyboardVisible] = useState(Keyboard.isVisible());
-  useEffect(() => {
-    const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
-    const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
-    return () => { show.remove(); hide.remove(); };
-  }, []);
-  const measureOffset = () => {
-    containerRef.current?.measureInWindow((_x, y) => setKeyboardOffset(y));
-  };
+  const keyboardHeight = useGradualKeyboardHeight();
+  const keyboardSpacer = useAnimatedStyle(() => ({
+    height: Math.abs(keyboardHeight.value),
+  }));
 
   return (
-    <View ref={containerRef} onLayout={measureOffset} collapsable={false} style={[styles.container, { backgroundColor: colors.background }]}>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior="padding"
-        enabled={Platform.OS !== "web"}
-        keyboardVerticalOffset={keyboardOffset}
-      >
-        <View style={styles.flex}>
-          <ChatMessages />
-        </View>
-        <View style={{ paddingBottom: keyboardVisible ? 8 : Math.max(insets.bottom, 8) }}>
-          <Composer />
-        </View>
-      </KeyboardAvoidingView>
+    <View
+      style={[styles.container, { backgroundColor: colors.background }]}
+    >
+      <View style={styles.flex}>
+        <ChatMessages />
+      </View>
+      <View style={{ paddingBottom: Math.max(insets.bottom, 8) }}>
+        <Composer />
+      </View>
+      <Animated.View style={keyboardSpacer} />
     </View>
   );
 }

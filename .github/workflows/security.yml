@@ -16,6 +16,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
+      - run: pnpm eval:agent
       - run: pnpm test
       - run: pnpm audit --audit-level=moderate
       - name: Secret scan
@@ -35,6 +36,13 @@ jobs:
           --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
+      - name: Install PostgreSQL 17 client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-17
       - run: bash scripts/test-database.sh
         env:
           TEST_DATABASE_URL: postgresql://postgres:local-test-only@localhost:5432/security_test
+          BOIT_DISPOSABLE_TEST_CLUSTER: I_ACKNOWLEDGE_THIS_CLUSTER_IS_DISPOSABLE

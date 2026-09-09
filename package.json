@@ -9,7 +9,9 @@
     "test": "pnpm build:contracts && pnpm test:dependencies && pnpm -r --if-present test",
     "test:dependencies": "node --test scripts/test-dependencies.mjs",
     "test:database": "bash scripts/test-database.sh",
-    "audit:dependencies": "pnpm audit --audit-level=moderate"
+    "audit:dependencies": "pnpm audit --audit-level=moderate",
+    "eval:agent": "pnpm --filter @boit/backend eval:agent",
+    "eval:agent:live": "node scripts/run-live-agent-evals.mjs"
   },
   "keywords": [],
   "author": "",

@@ -1,6 +1,12 @@
-# Local security verification — 2026-09-08
+# Local security verification
 
 These results describe the synthetic simulator in the working tree, not a deployed banking service.
+
+## Current non-database verification — 2026-09-09
+
+Root `pnpm test` passed 150 non-database tests: 118 backend, 29 mobile, and 3 dependency regression checks; the separately gated live-provider smoke test was skipped. `pnpm eval:agent` independently passed 46 executable security checks across five files. These include 13 policy-unit corpus cases, five real Mastra `Agent` trajectories driven by AI SDK's `MockLanguageModelV4` (input tripwire, safe text, trusted tool/UI, invalid-alias tool error, and bounded looping), plus route, processor, alias/schema, provider/privacy, statement-clarification continuation, interruption, no-partial-release, and runtime tool-limit coverage. The policy-unit fixtures are not counted as trajectories. The default `pnpm eval:agent:live` invocation was also verified to refuse execution without its explicit safety environment. `pnpm typecheck` passed across the workspace, and `git diff --check` passed. The repository currently contains 14 numbered migrations. The PostgreSQL suite was **not rerun** on 2026-09-09, so the database results below remain historical evidence from 2026-09-08 and do not verify migration 014 or the current database-test harness.
+
+## Historical verification — 2026-09-08
 
 | Check | Result |
 | --- | --- |

@@ -10,7 +10,7 @@ export class CardService {
             .eq('customer_id', customerId)
             .eq('status', 'ACTIVE');
         if (error) {
-            throw new Error(`Failed to fetch cards: ${error.message}`);
+            throw new Error('Unable to read cards');
         }
         return (cards || []) as Card[];
     }

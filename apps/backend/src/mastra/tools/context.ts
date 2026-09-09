@@ -5,6 +5,7 @@ export interface PrivateContext {
     database: SupabaseClient;
     signal?: AbortSignal;
     aliases: Map<string, string>;
+    approvedCitationUrls?: Set<string>;
     emit: (event: unknown) => Promise<void>;
 }
 export function toolContext(requestContext: any): PrivateContext {
@@ -23,7 +24,7 @@ export function resolveAlias(context: PrivateContext, alias?: string) {
 }
 export async function privateResult(context: PrivateContext, kind: string, items: any[]) {
     await context.emit({ type: 'PRIVATE_DATA', data: { kind, items } });
-    return { displayed: true, resources: items.map((item, index) => {
+    return { displayed: true as const, resources: items.map((item, index) => {
             const alias = kind + '-' + (index + 1);
             if (item.id)
                 context.aliases.set(alias, item.id);

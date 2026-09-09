@@ -1,77 +1,152 @@
-# AI-Powered Conversational Banking Platform: Architecture & Specification
+# Conversational Banking Simulator Architecture
 
-## Problem Statement
+This document describes the architecture implemented in the current working tree. The application is a security-focused simulator: it must use synthetic banking data and must not be connected to a real core-banking system.
 
-Al Masraf customers need a modern, extensible conversational interface to discover banking products (Accounts, Credit Cards, Loans) and execute self-service banking requests (e.g., blocking a card, requesting a statement). The problem is two-fold: providing accurate, hallucination-free knowledge about the bank's static products, and providing secure, deterministic, multi-turn stateful execution of banking services that require dynamic human-in-the-loop authorization (like a PIN or Biometric check). The institution requires this to be built as a generic, extensible foundation capable of supporting dozens of future services without rewriting the core orchestration engine.
+## System shape
 
-## Solution
+The repository is a pnpm TypeScript monorepo with three runtime boundaries:
 
-A full-stack, highly extensible conversational banking platform. 
-1. **Frontend**: A React Native (Expo) mobile application providing a secure chat interface, capable of streaming real-time responses and rendering structured UI service components (e.g., Statement Cards).
-2. **Backend**: A Fastify Node.js server written in TypeScript. 
-3. **Orchestration**: Mastra AI powers a Top-Level Intent Router Agent. 
-   - Questions about products are routed to a RAG pipeline (documents extracted via Firecrawl, stored in Supabase with `pgvector`, queried via Hybrid Search).
-   - Service requests (like Card Block or Statement Generation) are routed to deterministic Mastra Workflows, allowing for safe human-in-the-loop pauses.
-4. **Data Layer**: Supabase handles Authentication, LLM configuration, and a Core Banking relational schema (`cards`, `accounts`, `transactions`) representing the source of truth for the service execution.
+- `apps/mobile`: Expo and React Native client. It renders conversation text and trusted banking controls, manages the local authenticated session, and invokes authenticated HTTP endpoints.
+- `apps/backend`: Fastify API. It authenticates requests, constrains Mastra, persists chat history, validates server events, coordinates authorization, and exposes statement downloads.
+- `supabase`: Supabase Auth and PostgreSQL. It is the source of truth for customers, banking records, chat history, pending actions, authorization settings, challenges, statement requests, knowledge publication, revocations, and audit records.
 
-## User Stories
+Shared wire and domain types live under `packages/`. Mastra is an orchestration dependency inside the backend, not an independent authority or state owner.
 
-1. As a mobile bank customer, I want to authenticate securely into the application, so that my financial data and chat history are protected.
-2. As a mobile bank customer, I want to ask open-ended questions about Al Masraf's accounts, cards, and loans, so that I can make informed decisions about which products suit me.
-3. As a mobile bank customer, I want to receive fast, streamed text responses back from the AI agent, so that the experience feels responsive and natural.
-4. As a mobile bank customer, I want the bot to remember context from previous messages, so that I can ask follow-up questions without repeating myself.
-5. As a mobile bank customer, I want to request that one of my cards be blocked through the chat, so that I can secure my account quickly if a card is lost.
-6. As a mobile bank customer with multiple cards, I want the bot to ask me which specific card to block, so that I don't accidentally block the wrong one.
-7. As a mobile bank customer, I want to securely authorize sensitive requests (like card blocking) via a PIN or Biometric prompt inside the app, so that unauthorized users cannot execute critical services.
-8. As a mobile bank customer, I want to be able to change my mind, say "Cancel", or "Go back" in the middle of a service workflow, so that I am not trapped in an unwanted conversational loop.
-9. As a mobile bank customer, I want to request an account statement for a specific date range, so that I can review my transaction history.
-10. As a mobile bank customer, I want to be informed of any fees associated with generating a statement before it is executed, so that I can accept or decline the charge.
-11. As a mobile bank customer, I want to see the generated statement presented as a clean, structured UI component within the chat, so that it is easy to read.
-12. As a platform engineer, I want all service requests (Address Change, Cheque Book Request, etc.) to use the exact same extensible workflow pattern, so that new banking features can be added rapidly without touching core routing logic.
+```mermaid
+flowchart LR
+    Customer[Customer] --> Mobile[Expo mobile app]
+    Mobile -->|Bearer-authenticated HTTP and SSE| API[Fastify API]
+    API -->|bounded messages and temporary aliases| Agent[Mastra banking agent]
+    Agent -->|read or proposal tools| Policy[Backend policy and services]
+    Policy --> DB[(Supabase Auth and PostgreSQL)]
+    DB -->|customer-scoped records| Policy
+    Policy -->|validated private UI events| Mobile
+    Mobile -->|confirm, challenge, authorize| API
+    API -->|atomic authorized operation| DB
+```
 
-## Implementation Decisions
+## Runtime ownership
 
-- **Repository Structure**: A TypeScript NPM Monorepo housing both the Expo frontend and the Fastify backend, allowing shared type definitions (e.g., UI component payload schemas, API contracts).
-- **Frontend Framework**: React Native via Expo, styled with NativeWind for a premium UI mimicking Al Masraf brand guidelines (Turquoise/Blue and White).
-- **Backend API Contract**: HTTP POST endpoint `/api/chat` for incoming messages. Responses stream back via Server-Sent Events (SSE).
-- **LLM Provider**: OpenRouter API. `anthropic/claude-3.5-sonnet` (or `gpt-4o`) for Agent Orchestration/Routing. Native OpenAI `text-embedding-3-small` exclusively for RAG embeddings.
-- **RAG Ingestion System**: Firecrawl will automatically extract clean Markdown from the `almasraf.ae` product pages. Mastra's `MDocument` handles chunking.
-- **Search System**: Supabase Postgres RPC running a Reciprocal Rank Fusion (RRF) algorithm to combine `pgvector` Cosine Similarity and `tsvector` Full-Text Search for high-accuracy product retrieval.
-- **Intent & State Routing**: Supabase's `chat_sessions` table will hold a JSONB `active_workflow_state`. Fastify intercepts incoming requests; if a workflow is in progress (e.g., waiting for PIN auth), it routes the user's message directly to that Mastra Workflow. Otherwise, it routes to the Top-Level Mastra Agent.
-- **Core Banking Schema Requirements**:
-  - `customer_profiles` (id, user_id, kyc_status)
-  - `bank_accounts` (account_number, balance, type)
-  - `cards` (last_4, status, network)
-  - `transactions` (amount, category, description). Used for dynamically deducting statement generation fees and retrieving statement history.
-- **Seeding**: A `seed.sql` file will bootstrap Mock Users with exact demo conditions (3 active Mastercards, 2 core accounts, 30 historical transactions).
+| Concern | Owner | Notes |
+| --- | --- | --- |
+| Authentication and sessions | Supabase Auth plus the Fastify auth plugin | The backend derives the authentication-user ID, customer ID, session ID, and expiry from a verified token. |
+| Conversation transport | Fastify `/api/chat` and mobile SSE client | Server UI events can stream as they are validated; model prose is buffered until the complete response passes output checks. |
+| Intent capability | `sensitive-action-policy.ts` | Each turn receives an explicit tool allowlist. Unsupported money movement is rejected without invoking the model. |
+| Language reasoning | Mastra `bankingAgent` | The agent may choose from the allowed tools and produce prose. It cannot authorize or execute banking mutations. |
+| Private data display | Backend tools and typed `PRIVATE_DATA` events | Private records go to the authenticated client. The model receives request-scoped aliases instead of record identifiers or values. |
+| Banking proposals | Backend tools and services | Card selection and statement quote tools create bounded pending records and emit typed UI events. |
+| Confirmation and authorization | Mobile trusted controls plus Fastify action routes | Confirmation is separate from model prose. PIN, biometric signature, or TOTP authorization is verified by deterministic backend code. |
+| Banking state changes | PostgreSQL functions and deterministic services | Ownership, state version, expiry, idempotency, challenge consumption, fee deduction, and audit behavior are enforced outside the model. |
+| PDF delivery | Fastify statement route | Only an authenticated, customer-owned statement with `ISSUED` status can be downloaded. |
 
-## Testing Decisions
+## Chat request path
 
-### What makes a good test here?
-A good test for an AI orchestration system evaluates external boundaries and deterministic rules, NOT the exact phrasing of an LLM. We test meaning and state-transitions, not string equality.
+1. The mobile client sends only the latest user message and session ID to `POST /api/chat`. Client-supplied history is rejected.
+2. Fastify loads server-owned history, privacy-minimizes the new message, and applies the deterministic sensitive-action policy.
+3. The policy chooses one capability set:
+   - ordinary request: read-only banking and approved knowledge tools;
+   - card block: card-block proposal tool only;
+   - statement request: product display and statement-quote tools only;
+   - money movement or mixed sensitive request: deterministic refusal with no model call.
+4. Mastra receives bounded history, dynamic server date, authenticated request context, the selected tool allowlist, step/output limits, and input/output processors.
+5. Tool events must pass the shared server-event schema and the per-turn capability policy before they are persisted or sent to the client.
+6. Model text remains in a server-side buffer. Provider errors, aborts, tripwires, unfinished tool calls, excessive output, unapproved URLs, and unverified banking-outcome claims discard the buffer.
+7. Safe text is policy-shaped, persisted, and sent as one SSE text event followed by `done`.
 
-### The Highest Seams (Test Boundaries)
-Since this is a greenfield project, we have structured the architecture to expose two ideal testing seams:
-1. **The Fastify Network Boundary**: E2E tests executing HTTP POST requests with conversational input and asserting on the final SSE payloads. This tests the Top-Level Router and RAG retrieval in concert.
-2. **The Mastra Workflow Boundary (Logic Seam)**: Testing the deterministic Mastra Workflows (e.g., `CardBlockWorkflow`) completely isolated from the HTTP layer. We can initialize a workflow with specific states (e.g., `WAITING_FOR_AUTH`) and assert the state transitions to `COMPLETED` when valid auth mock signatures are provided.
+## Private data and aliases
 
-### Modules to Test
-- `IntentRouter`: Ensure "Cancel" wipes the `active_workflow_state` in the database.
-- `RAG Retrieval (Hybrid Search)`: Mock the Supabase RPC and ensure the correct product document chunks are fed into the LLM context.
-- `CardBlock / Statement Workflows`: Ensure that attempting to block a card without sufficient Auth fails, and ensure generating a statement deducts the exact fee amount from the `bank_accounts`/`transactions` mock tables.
+Read tools query through the authenticated customer's database client. A private tool result has two outputs:
 
-## Out of Scope
+- a `PRIVATE_DATA` event containing customer-scoped records for the authenticated mobile UI;
+- a minimal model-visible result containing ordinal aliases such as `products-1` or `accounts-2`.
 
-- Real banking integration (Core Banking APIs, Visa/Mastercard processing). All financial data is mocked in Supabase.
-- Advanced production CI/CD pipelines. This is built as an extensible local/prototype platform.
-- Managing user registration flows and email confirmations (we assume pre-seeded Supabase magic links or dummy credentials for the demo).
+Aliases live only in the current request context. A dependent tool must refresh the relevant list in the same turn and resolve the alias server-side. Database identifiers supplied directly by the model are not accepted as aliases.
 
-## Further Notes
+## Statement request flow
 
-- By implementing Tools in Mastra (e.g., `fetch_user_cards()`), we strictly prevent the LLM from hallucinating account data, acting exactly like an enterprise middleware layer. The LLM simply translates intent to Tool Calls, and formatting to text. Tool logic executes securely on the backend against Postgres.
+Statement generation is a multi-request application flow, not a persisted Mastra workflow.
 
-## Security authority (supersedes earlier workflow and authorization descriptions)
+```mermaid
+sequenceDiagram
+    participant U as Customer
+    participant M as Mobile app
+    participant C as Chat route and policy
+    participant A as Mastra agent
+    participant D as Services and PostgreSQL
 
-Mastra is a replaceable proposal-generation adapter. Banking state and authorization are owned by deterministic services and PostgreSQL transactions, not Mastra persistent workflows. Distinct authentication-user and customer IDs form the request principal. TOTP challenges are verified by Supabase and consumed once against the bound action version and session. Legacy PIN, biometric-token, and model-provided fee acceptance paths are retired.
+    U->>M: Download account statement
+    M->>C: Chat message
+    C->>A: Enable getUserProducts and generateStatement
+    A->>D: Read active products
+    D-->>M: PRIVATE_DATA products
+    alt account or dates are missing
+        C-->>M: Ask for account position, from date, and to date
+        U->>M: First account, 2026-08-01 to 2026-08-31
+        M->>C: Follow-up message
+        C->>A: Continue bounded statement capability
+        A->>D: Refresh products and resolve fresh products-1 alias
+    end
+    A->>D: Create unconfirmed statement quote
+    D-->>M: STATEMENT_QUOTE with fee and period
+    U->>M: Confirm quote
+    M->>D: Confirm action, request challenge, authorize
+    D->>D: Verify factor and atomically issue statement and fee
+    D-->>M: Completed action
+    U->>M: Save or share PDF
+    M->>D: Authenticated download by statement ID
+```
 
-Database migrations 009–013 revoke customer mutation privileges, establish durable action/challenge/revocation/audit and statement records, and restrict approved knowledge publication. Statement confirmation charges the simulator's 25 AED fee once and snapshots its transaction rows. Knowledge ingestion uses a separate staging-only principal. See [security operations](docs/security/OPERATIONS.md) and [threat model](docs/security/THREAT-MODEL.md) for trust boundaries, migration ordering, evidence, and production gates.
+Required quote inputs are a freshly resolved account-backed product alias, `fromDate`, and `toDate`. The backend never chooses an account or period for the customer. If inputs are missing and no `STATEMENT_QUOTE` exists, the sensitive-action policy returns a trusted clarification instead of exposing arbitrary model text or reporting a false PDF failure. A plausible reply to that exact persisted prompt continues the statement capability; cancellation exits it.
+
+`generateStatement` creates an unconfirmed quote and emits `STATEMENT_QUOTE`. It does not issue the statement or debit the fee. The trusted statement card performs confirmation, obtains a fresh authorization challenge using the configured method, and submits authorization. PostgreSQL then performs the once-only fee debit, transaction snapshot, statement issuance, and audit updates. The PDF endpoint accepts only the persisted statement ID and returns content only after issuance.
+
+## Card-block flow
+
+The card tool creates a pending action and emits `CARD_SELECTION`. The mobile card control supplies the selected customer-owned card, moves the action through confirmation, obtains a fresh authorization challenge, and submits authorization. The database-backed action service executes the block only from an authorized, current action version. Model prose cannot select, confirm, authorize, or claim completion.
+
+## Authorization methods
+
+Customers must configure one banking authorization method before using chat:
+
+- `PIN`: a six-digit value stored as a salted password hash and subject to attempt limits and lockout;
+- `BIOMETRIC`: the mobile device signs a short-lived server challenge with its enrolled Ed25519 key; a client boolean is not authorization;
+- `TOTP`: Supabase verifies a bank-registered factor and a short-lived, action/session/version-bound challenge.
+
+Changing the preference requires recent password verification and invalidates outstanding challenges through preference versioning. Authorization may rotate the authenticated session, so the mobile client applies returned tokens before continuing.
+
+## Data and trust boundaries
+
+- Customer-facing database reads use the verified user session and row-level security.
+- Highly privileged service credentials remain backend-only and are used behind ownership checks and restricted RPCs.
+- Public signup is disabled; customer provisioning is bank-managed.
+- Knowledge ingestion stages documents with a dedicated principal. Only administrator-approved, effective versions can be retrieved.
+- Model-generated JSON and URLs are inert. Only authenticated, schema-validated server UI events create controls, and only approved retrieved sources can contribute citation URLs.
+- `AI_ENABLED` controls provider use. `BANKING_MUTATIONS_ENABLED` independently controls proposal and mutation endpoints.
+- Local process rate limits are defensive only; a deployment needs a shared edge rate limiter and the external controls listed in the security operations guide.
+
+## Persistence model
+
+The main persisted concepts are:
+
+- `customer_profiles`, `bank_accounts`, `cards`, `transactions`, and `customer_products` for simulator banking data;
+- `chat_sessions` and `chat_messages` for server-owned conversation history and trusted UI-event records;
+- `pending_actions`, authorization settings, approved factors, challenges, revocations, and audit events for execution control;
+- `statement_requests` for quote, consent, issuance status, fee, and transaction snapshot;
+- staged and published knowledge records plus search functions for approved product information.
+
+Migrations under `supabase/migrations/` are the executable schema history. Documentation must not override their constraints or grants.
+
+## Verification boundaries
+
+The default suites cover type contracts, route behavior, policy classification, real Mastra trajectories with a mock model, tool schemas, private aliases, authorization services, mobile protocol parsing, dependency patches, and database security behavior where the explicitly isolated database suite is run.
+
+Offline tests do not certify a live provider, hosted Supabase configuration, physical-device secure storage, production rate limits, backup recovery, or a real banking integration. Those remain release gates in `docs/security/OPERATIONS.md`.
+
+## Canonical references
+
+- `CONTEXT.md`: domain language.
+- `docs/adr/0001-model-proposes-services-decide.md`: core authority decision.
+- `docs/security/THREAT-MODEL.md`: attackers, assets, and trust boundaries.
+- `docs/security/OPERATIONS.md`: deployment and incident controls.
+- `docs/security/VERIFICATION.md`: dated verification evidence and its limitations.
+- `README.md`: local setup and developer commands.

@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { Drawer } from 'expo-router/drawer';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { ChatProvider, useChat } from '../context/ChatContext';
 import { View, Text, TouchableOpacity, FlatList, StyleSheet, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -107,9 +108,11 @@ function DrawerLayout() {
 export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <ChatProvider>
-        <DrawerLayout />
-      </ChatProvider>
+      <KeyboardProvider>
+        <ChatProvider>
+          <DrawerLayout />
+        </ChatProvider>
+      </KeyboardProvider>
     </GestureHandlerRootView>
   );
 }

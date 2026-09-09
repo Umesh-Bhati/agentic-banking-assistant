@@ -73,8 +73,15 @@ export async function startServer(): Promise<void> {
     const server = await createServer();
     await server.listen({ port: Number(process.env.PORT || 3000), host: '0.0.0.0' });
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
-    startServer().catch(() => {
+export function reportStartupFailure(error: unknown): void {
+    if (process.env.NODE_ENV === 'production') {
         process.stderr.write('Server startup failed\n');
+        return;
+    }
+    console.error('Server startup failed', error);
+}
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+    startServer().catch((error: unknown) => {
+        reportStartupFailure(error);
         process.exitCode = 1;
     });

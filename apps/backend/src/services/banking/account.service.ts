@@ -9,7 +9,7 @@ export class AccountService {
             .select('*')
             .eq('customer_id', customerId);
         if (error) {
-            throw new Error(`Failed to fetch accounts: ${error.message}`);
+            throw new Error('Unable to read accounts');
         }
         return (accounts || []).map(account => ({ ...account, balance: String(account.balance) })) as BankAccount[];
     }
@@ -26,7 +26,7 @@ export class AccountService {
         }
         const { data: accounts, error } = await query;
         if (error) {
-            throw new Error(`Failed to fetch balance: ${error.message}`);
+            throw new Error('Unable to read balance');
         }
         if (!accounts || accounts.length === 0) {
             throw new Error('Account not found');
@@ -61,7 +61,7 @@ export class AccountService {
         }
         const { data: transactions, error } = await query;
         if (error) {
-            throw new Error(`Failed to fetch transactions: ${error.message}`);
+            throw new Error('Unable to read transactions');
         }
         return (transactions || []).map(transaction => ({ ...transaction, amount: String(transaction.amount) })) as Transaction[];
     }
